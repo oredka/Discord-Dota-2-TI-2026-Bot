@@ -1,0 +1,51 @@
+name: The International 2026 Discord updates
+
+on:
+  # Run during tournament in Shanghai (Aug 13-23, 2026)
+  # Shanghai is UTC+8, matches 10:00-22:00+ Shanghai = 02:00-14:00+ UTC
+  # Starting 1 hour early (01:00 UTC) in case matches begin earlier
+  # With 70-min games, may extend to ~15:30 UTC
+  schedule:
+    # Every 5 minutes during tournament hours (01:00-16:00 UTC)
+    - cron: "*/5 1-15 13-23 8 *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish-update:
+    runs-on: ubuntu-latest
+    # Do not create another commit when the state-only commit starts this workflow.
+    if: github.actor != 'github-actions[bot]'
+    env:
+      STRATZ_API_TOKEN: ${{ secrets.STRATZ_API_TOKEN }}
+      STRATZ_LEAGUE_ID: ${{ vars.STRATZ_LEAGUE_ID }}
+      SERIES_BEST_OF: ${{ vars.SERIES_BEST_OF || '3' }}
+      LIQUIPEDIA_USER_AGENT: ${{ vars.LIQUIPEDIA_USER_AGENT || 'TI2026DiscordBot/1.0 (GitHub Actions)' }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Publish a new match update
+        run: python main.py
+
+      - name: Save the last published match
+        run: |
+          if test -z "$(git status --porcelain -- .state/match_states.json)"; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .state/match_states.json
+          git commit -m "chore: remember TI match states"
+          git push
