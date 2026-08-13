@@ -320,9 +320,9 @@ def format_start(unix_time: int | None) -> str:
     return f"<t:{unix_time}:t>"
 
 
-def get_series_best_of(match: dict, day: int) -> int:
-    """TI 2026: Grand Final (Day 11) is Bo5, others are Bo3."""
-    if day == 11:
+def get_series_best_of(match: dict, day_matches: list[dict], day: int) -> int:
+    """TI 2026: Grand Final (the last match of Day 11) is Bo5, others are Bo3."""
+    if day == 11 and match == day_matches[-1]:
         return 5
     return 3
 
@@ -483,7 +483,7 @@ def main() -> int:
                 continue
 
             # Determine best-of format for this match
-            best_of = get_series_best_of(match, day)
+            best_of = get_series_best_of(match, day_matches, day)
             wins_required = best_of // 2 + 1
             
             # Grand Final is the last match of the last day
