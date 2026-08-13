@@ -311,32 +311,17 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
             reverse=True
         )
         
-        table = "```\n"
-        table += f"{'Команда':<24}  {'Рахунок':<7}  {'Місце':<5}\n"
-        
+        table = ""
         for i, name in enumerate(sorted_teams):
             stats = team_stats[name]
             score_str = f"{stats['wins']}-{stats['losses']}"
-            
-            # Get label with emoji
             label = team_label(name, catalog)
+            place = i + 1
             
-            # Check if team is eliminated
-            # In TI group stage, teams are only eliminated at the end of groups.
-            # For now, we just show the rank.
-            place = str(i + 1)
-            
-            # Manual padding to account for emoji width in Discord's code blocks.
-            # Flags and emojis in Discord code blocks usually take the width of 2 standard chars.
-            # 'label' is 'flag + space + name'.
-            # Visual width = 2 (flag) + 1 (space) + len(name) = 3 + len(name).
-            # We want total visual width to be 24.
-            padding_len = 24 - (len(name) + 3)
-            padding = " " * max(0, padding_len)
-            table += f"{label}{padding}  {score_str:<7}  {place:<5}\n"
-        table += "```"
+            # Simple text format: 1. 🇷🇺 Team (4-2)
+            table += f"{place}. {label} ({score_str})\n"
 
-        res = f"🏆 **ДЕНЬ {day} THE INTERNATIONAL 2026 ЗАВЕРШИВСЯ**\n{table}"
+        res = f"🏆 **ДЕНЬ {day} THE INTERNATIONAL 2026 ЗАВЕРШИВСЯ**\n\n{table}"
         return res + "\n\u200b\n"
     if kind == "game_finished":
         left_score, right_score = score_up_to(match, matches)
