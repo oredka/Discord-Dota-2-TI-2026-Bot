@@ -197,7 +197,9 @@ def tournament_day(match: dict) -> int:
 
 
 def games_in_series(match: dict, matches: list[dict]) -> list[dict]:
-    series_games = [game for game in matches if series_key(game) == series_key(match)]
+    s_key = series_key(match)
+    series_games = [game for game in matches if series_key(game) == s_key]
+    # Ensure they are sorted by match_id to maintain game order even if times are identical
     return sorted(series_games, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))
 
 
@@ -475,7 +477,8 @@ def main() -> int:
             # Check if this match was already announced in this day's state
             if match_id not in day_states:
                 left_wins, right_wins = score_up_to(match, matches)
-                is_series_end = max(left_wins, right_wins) >= wins_required
+                wins_required = SERIES_BEST_OF // 2 + 1
+                is_series_end = left_wins >= wins_required or right_wins >= wins_required
 
                 if not is_series_end:
                     if announce(ctx, day_states, match_id, "game_finished", match, f"Game finished: {radiant} vs {dire} (Match ID: {match_id})"):
@@ -495,7 +498,8 @@ def main() -> int:
                 # completion needs to be announced. This handles cases where a game was posted 
                 # but the subsequent series message was missed in a previous run.
                 left_wins, right_wins = score_up_to(match, matches)
-                if max(left_wins, right_wins) >= wins_required:
+                wins_required = SERIES_BEST_OF // 2 + 1
+                if left_wins >= wins_required or right_wins >= wins_required:
                     series_state_key = f"done:{series_key(match)}"
                     label = f"Series finished (delayed): {radiant} vs {dire} ({left_wins} — {right_wins})"
                     if announce(ctx, day_states, series_state_key, "series_finished", match, label):
