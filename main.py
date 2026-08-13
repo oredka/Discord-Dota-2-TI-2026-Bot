@@ -22,7 +22,7 @@ LIQUIPEDIA_URL = "https://liquipedia.net/dota2/The_International/2026"
 MAINCAST_DOTA2_URL = "https://www.youtube.com/@Dota2_maincast/streams"
 STATE_FILE = Path(os.getenv("STATE_FILE", "states/match_states.json"))
 TEAM_CATALOG_FILE = Path(os.getenv("TEAM_CATALOG_FILE", "team_metadata.json"))
-SERIES_BEST_OF = int(os.getenv("SERIES_BEST_OF", "3"))
+# SERIES_BEST_OF = int(os.getenv("SERIES_BEST_OF", "3"))  # Removed in favor of dynamic detection
 LIQUIPEDIA_CACHE_SECONDS = 600
 TI_START_DATE = datetime(2026, 8, 13, tzinfo=UTC)
 # Set to 1 to record every current result in the state without posting anything to Discord.
@@ -421,9 +421,6 @@ def announce(ctx: dict, day_states: dict[str, object], key: str, kind: str, matc
 
 
 def main() -> int:
-    if SERIES_BEST_OF < 1:
-        raise RuntimeError("SERIES_BEST_OF must be at least 1")
-    
     webhook_url = require("DISCORD_WEBHOOK_URL")
     now = int(datetime.now(UTC).timestamp())
     states = load_states()
@@ -454,7 +451,6 @@ def main() -> int:
     }
 
     published = 0
-    wins_required = SERIES_BEST_OF // 2 + 1
     processed = 0
 
     for day in sorted(day_to_matches.keys()):
