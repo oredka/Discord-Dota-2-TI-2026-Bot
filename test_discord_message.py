@@ -17,7 +17,7 @@ if not webhook_url:
 messages = {
     'day': '📅 **ДЕНЬ 1 THE INTERNATIONAL 2026**\nhttps://www.youtube.com/@Dota2_maincast',
     'game_finished': '🎮 **ГРА 1 ЗАВЕРШИЛАСЯ**\n🇪🇺 Team Liquid 1 — 0 🇨🇳 Xtreme Gaming\n⏱ Тривалість: 42:15',
-    'series_finished': '🏆 **МАТЧ ЗАВЕРШИВСЯ**\n🇪🇺 Team Liquid 3 — 1 🇨🇳 Xtreme Gaming\n🥇 Переможець: 🇪🇺 Team Liquid'
+    'series_finished': '🏆 **МАТЧ ЗАВЕРШИВСЯ**\n🇪🇺 Team Liquid 2 — 1 🇨🇳 Xtreme Gaming\n⏱ Тривалість гри 3: 42:15\n🥇 Переможець: 🇪🇺 Team Liquid'
 }
 
 payload = {

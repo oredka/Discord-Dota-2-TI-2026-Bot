@@ -356,10 +356,13 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], catalog: 
     left_total, right_total = score(match, matches)
     winner_name = left_name if left_total > right_total else right_name
     
+    last_game_duration = format_duration(match.get("duration"))
+    last_game_num = game_number(match, matches)
+
     if is_grand_final:
-        res = f"🏆🥇 **ПЕРЕМОЖЕЦЬ THE INTERNATIONAL 2026**\n{team_label(winner_name, catalog)} ({left_total} — {right_total})"
+        res = f"🏆🥇 **ПЕРЕМОЖЕЦЬ THE INTERNATIONAL 2026**\n{team_label(winner_name, catalog)} ({left_total} — {right_total})\n⏱ Тривалість гри {last_game_num}: {last_game_duration}"
     else:
-        res = f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{left_label} {left_total} — {right_total} {right_label}\n🥇 Переможець: {team_label(winner_name, catalog)}"
+        res = f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{left_label} {left_total} — {right_total} {right_label}\n⏱ Тривалість гри {last_game_num}: {last_game_duration}\n🥇 Переможець: {team_label(winner_name, catalog)}"
     
     return res + "\n\u200b\n"
 
