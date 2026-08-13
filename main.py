@@ -263,7 +263,7 @@ def main() -> int:
             announced_days.add(day)
     
     for match in matches:
-        match_id = str(match["id"])
+        match_id = str(match["match_id"])
         current = match_state(match, now)
         previous = states.get(match_id)
         radiant, dire = teams(match)
