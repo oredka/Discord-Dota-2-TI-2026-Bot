@@ -109,10 +109,10 @@ def fetch_matches(league_id: int) -> tuple[dict, list[dict]]:
     matches = [m for m in matches if m.get("leagueid") == league_id]
     
     league = {"displayName": "The International 2026", "id": league_id}
-    # Sort strictly: first by start_time, then by series_id, then by match_id
+    # Sort strictly: first by tournament day, then by start_time, then by series_id, then by match_id
     sorted_matches = sorted(
         matches, 
-        key=lambda x: (x.get("start_time") or 0, x.get("series_id") or 0, x.get("match_id") or 0)
+        key=lambda x: (tournament_day(x), x.get("start_time") or 0, x.get("series_id") or 0, x.get("match_id") or 0)
     )
     return league, sorted_matches
 
@@ -169,10 +169,17 @@ def tournament_day(match: dict) -> int:
     start_time = match.get("start_time") or 0
     if start_time == 0:
         return 0
-    # Use EEST (UTC+3) or similar for TI to avoid day shift in middle of games
-    # But for simplicity, let's just shift UTC by -5 hours (Seattle time)
-    seattle_time = start_time - (5 * 3600)
-    day_diff = (seattle_time // 86400) - (int(TI_START_DATE.timestamp() - (5 * 3600)) // 86400)
+    
+    # TI 2026 starts on Aug 13. We use a fixed reference point for Day 1.
+    # We'll use 2026-08-13 00:00:00 UTC as the base for Day 1.
+    # Shifting by -7 hours (PDT, Seattle time) to ensure the whole session stays in one day.
+    # 2026-08-13 00:00:00 UTC is 1786579200
+    base_timestamp = 1786579200
+    
+    seattle_time = start_time - (7 * 3600)
+    seattle_base = base_timestamp - (7 * 3600)
+    
+    day_diff = (seattle_time // 86400) - (seattle_base // 86400)
     return max(1, day_diff + 1)
 
 
