@@ -8,9 +8,9 @@ on:
       - 'team_metadata.json'
       - '.github/workflows/discord-ti2026.yml'
   schedule:
-    # Every 10 minutes during tournament (Aug 13-24 UTC)
+    # Every 5 minutes during tournament (Aug 13-24 UTC)
     # We use a broad hour range 0-23 to ensure coverage across all timezones and potential delays
-    - cron: "*/10 * 13-24 8 *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
