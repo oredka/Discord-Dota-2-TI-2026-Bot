@@ -25,6 +25,12 @@ TEAM_CATALOG_FILE = Path(os.getenv("TEAM_CATALOG_FILE", "team_metadata.json"))
 SERIES_BEST_OF = int(os.getenv("SERIES_BEST_OF", "3"))
 LIQUIPEDIA_CACHE_SECONDS = 600
 TI_START_DATE = datetime(2026, 8, 13, tzinfo=UTC)
+# How long after a game ends we still consider its result worth announcing. Anything older is
+# adopted into the state silently, so a lost or fresh state file never floods the channel.
+RECENT_EVENT_SECONDS = 3 * 3600
+DAY_EVENT_SECONDS = 6 * 3600
+# Set to 1 to record every current result in the state without posting anything to Discord.
+SILENT_BOOTSTRAP = os.getenv("SILENT_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes")
 
 # Deprecated STRATZ settings
 STRATZ_ENDPOINT = "https://api.stratz.com/graphql"
@@ -154,6 +160,16 @@ def match_state(match: dict, now: int) -> str:
     return "scheduled"
 
 
+def match_end_time(match: dict) -> int:
+    start = match.get("start_time") or 0
+    return start + (match.get("duration") or 0) if start else 0
+
+
+def is_recent_match(match: dict, now: int, window: int) -> bool:
+    end = match_end_time(match)
+    return bool(end) and (now - end) < window
+
+
 def series_key(match: dict) -> str:
     if match.get("series_id"):
         return f"series:{match['series_id']}"
@@ -260,6 +276,39 @@ def game_number(match: dict, matches: list[dict]) -> int:
     return 1
 
 
+def standings(matches: list[dict], day: int) -> list[tuple[int, str, int, int]]:
+    """Games won/lost per team up to the end of `day`, ordered by current place in the tournament.
+
+    Teams are ranked by wins, then by fewest losses; equal records share a place.
+    """
+    stats: dict[str, dict[str, int]] = {}
+    for match in matches:
+        if tournament_day(match) > day:
+            continue
+        radiant, dire = teams(match)
+        known = [name for name in (radiant, dire) if name not in ("Radiant", "Dire")]
+        for name in known:
+            stats.setdefault(name, {"wins": 0, "losses": 0})
+        outcome = match.get("radiant_win")
+        if outcome is None or len(known) < 2:
+            continue
+        winner, loser = (radiant, dire) if outcome else (dire, radiant)
+        stats[winner]["wins"] += 1
+        stats[loser]["losses"] += 1
+
+    ordered = sorted(stats, key=lambda name: (-stats[name]["wins"], stats[name]["losses"], name.casefold()))
+
+    rows: list[tuple[int, str, int, int]] = []
+    place = 0
+    previous: tuple[int, int] | None = None
+    for index, name in enumerate(ordered, start=1):
+        record = (stats[name]["wins"], stats[name]["losses"])
+        if record != previous:
+            place, previous = index, record
+        rows.append((place, name, *record))
+    return rows
+
+
 def format_duration(seconds: int | None) -> str:
     seconds = seconds or 0
     return f"{seconds // 60}:{seconds % 60:02d}" if seconds else "—"
@@ -286,41 +335,11 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
         return res + "\n\u200b\n"
     if kind == "day_finished":
         day = tournament_day(match)
-        # Calculate table: team, score, place
-        team_stats = {}  # name -> {"wins": 0, "losses": 0}
-        
-        # Consider all matches up to the end of this day
-        relevant_matches = [m for m in matches if tournament_day(m) <= day and m.get("radiant_win") is not None]
-        
-        for m in relevant_matches:
-            r_name = m.get("radiant_name") or "Radiant"
-            d_name = m.get("dire_name") or "Dire"
-            if r_name not in team_stats: team_stats[r_name] = {"wins": 0, "losses": 0}
-            if d_name not in team_stats: team_stats[d_name] = {"wins": 0, "losses": 0}
-            
-            if m.get("radiant_win"):
-                team_stats[r_name]["wins"] += 1
-                team_stats[d_name]["losses"] += 1
-            else:
-                team_stats[d_name]["wins"] += 1
-                team_stats[r_name]["losses"] += 1
-        
-        sorted_teams = sorted(
-            team_stats.keys(), 
-            key=lambda x: (team_stats[x]["wins"], -team_stats[x]["losses"]), 
-            reverse=True
+        # Simple text format: 1. 🇷🇺 Team (4-2), ordered by current place in the tournament
+        table = "".join(
+            f"{place}. {team_label(name, catalog)} ({wins}-{losses})\n"
+            for place, name, wins, losses in standings(matches, day)
         )
-        
-        table = ""
-        for i, name in enumerate(sorted_teams):
-            stats = team_stats[name]
-            score_str = f"{stats['wins']}-{stats['losses']}"
-            label = team_label(name, catalog)
-            place = i + 1
-            
-            # Simple text format: 1. 🇷🇺 Team (4-2)
-            table += f"{place}. {label} ({score_str})\n"
-
         res = f"🏆 **ДЕНЬ {day} THE INTERNATIONAL 2026 ЗАВЕРШИВСЯ**\n\n{table}"
         return res + "\n\u200b\n"
     if kind == "game_finished":
@@ -366,6 +385,28 @@ def publish(webhook_url: str, text: str) -> None:
     )
 
 
+def announce(ctx: dict, day_states: dict[str, object], key: str, kind: str, match: dict, label: str, window: int) -> bool:
+    """Publish one event at most once, ever. Returns True when a Discord message was sent.
+
+    A key already present in the day state was handled by an earlier run, so a repeated Action run
+    stays silent. Results older than `window` are recorded without publishing: they belong to a day
+    we were not watching, and re-posting the whole day would spam the channel.
+    """
+    if key in day_states:
+        return False
+    if SILENT_BOOTSTRAP or not is_recent_match(match, ctx["now"], window):
+        day_states[key] = "announced"
+        return False
+    try:
+        publish(ctx["webhook_url"], message(kind, ctx["league"], match, ctx["matches"], ctx["liquipedia"], ctx["catalog"], ctx["now"]))
+    except RuntimeError as error:
+        print(f"  ✗ Error publishing {label}: {error}", file=sys.stderr)
+        return False
+    day_states[key] = "announced"
+    print(f"  ✓ {label}")
+    return True
+
+
 def main() -> int:
     if SERIES_BEST_OF < 1:
         raise RuntimeError("SERIES_BEST_OF must be at least 1")
@@ -390,14 +431,14 @@ def main() -> int:
                 day_to_matches[d] = []
             day_to_matches[d].append(match)
     
-    # Check if this is the first run ever (no state file at all)
-    is_first_run = not states and not any(
-        STATE_FILE.with_name(f"match_states_day{d}.json").exists() and 
-        STATE_FILE.with_name(f"match_states_day{d}.json").stat().st_size > 5 
-        for d in day_to_matches
-    )
-    if is_first_run:
-        print("First run detected. Initializing state without sending messages for existing matches (except final daily tables).")
+    ctx = {
+        "webhook_url": webhook_url,
+        "league": league,
+        "matches": matches,
+        "liquipedia": liquipedia,
+        "catalog": catalog,
+        "now": now,
+    }
 
     published = 0
     wins_required = SERIES_BEST_OF // 2 + 1
@@ -405,107 +446,36 @@ def main() -> int:
     
     print(f"Processing {len(matches)} matches in {len(day_to_matches)} days...")
 
-    # Fix for Day 1 request: migrate existing state to Day 1 file if it's the first run
-    if not load_states(1) and states:
-        print("Migrating global states to Day 1 states...")
-        save_states(states, 1)
-
     for day in sorted(day_to_matches.keys()):
         day_matches = day_to_matches[day]
         # Sort matches within the day strictly chronologically
         day_matches = sorted(day_matches, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))
         
+        # Every announcement is keyed in this dict, so a repeated run publishes nothing new.
         day_states = load_states(day)
-        new_day_states = dict(day_states)
-        
-        # Track what was already announced for this day
-        announced_in_day = set()
-        for k, v in day_states.items():
-            if v == "announced" or v == "finished":
-                announced_in_day.add(k)
 
         for match in day_matches:
             match_id = str(match["match_id"])
-            current = match_state(match, now)
-            previous = day_states.get(match_id)
             radiant, dire = teams(match)
-            
-            # Announce tournament day once per day
-            if current != "scheduled":
-                day_state_key = f"day:{day}"
-                if day_state_key not in announced_in_day:
-                    is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
-                    if not is_first_run and (previous is not None or is_recent):
-                        try:
-                            publish(webhook_url, message("tournament_day", league, match, matches, liquipedia, catalog, now))
-                            published += 1
-                            print(f"  ✓ Day {day} announcement")
-                            announced_in_day.add(day_state_key)
-                            new_day_states[day_state_key] = "announced"
-                        except RuntimeError as error:
-                            print(f"  ✗ Error announcing day {day}: {error}", file=sys.stderr)
-                    else:
-                        new_day_states[day_state_key] = "announced"
-                        announced_in_day.add(day_state_key)
-            
-            try:
-                if current == "finished":
-                    # Check if this specific match completed the series
-                    first_so_far, second_up_to = score_up_to(match, matches)
-                    series_state_key = f"done:{series_key(match)}"
-                    is_series_clinching = max(first_so_far, second_up_to) >= wins_required
+            if match_state(match, now) != "finished":
+                processed += 1
+                continue
 
-                    # 1. Announce Game Finished if not already done
-                    if previous != "finished":
-                        is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
-                        if not is_first_run and (previous is not None or is_recent):
-                            # Even if clinching, we still announce the last game
-                            publish(webhook_url, message("game_finished", league, match, matches, liquipedia, catalog, now))
-                            published += 1
-                            print(f"  ✓ Game finished: {radiant} vs {dire} (Match ID: {match_id})")
-                        new_day_states[match_id] = "finished"
+            published += announce(ctx, day_states, f"day:{day}", "tournament_day", match, f"Day {day} announcement", DAY_EVENT_SECONDS)
+            published += announce(ctx, day_states, match_id, "game_finished", match, f"Game finished: {radiant} vs {dire} (Match ID: {match_id})", RECENT_EVENT_SECONDS)
 
-                    # 2. Announce Series Finished if this match clinches it
-                    if series_state_key not in announced_in_day:
-                        if is_series_clinching:
-                            is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
-                            if not is_first_run and (previous is not None or is_recent):
-                                publish(webhook_url, message("series_finished", league, match, matches, liquipedia, catalog, now))
-                                published += 1
-                                series_games = games_in_series(match, matches)
-                                first_game = series_games[0]
-                                left_name = first_game.get("radiant_name") or "Radiant"
-                                winner = left_name if first_so_far > second_up_to else (first_game.get("dire_name") or "Dire")
-                                print(f"  ✓ Series finished: {winner} wins {first_so_far} — {second_up_to}")
-                                announced_in_day.add(series_state_key)
-                            new_day_states[series_state_key] = "finished"
-            except RuntimeError as error:
-                print(f"  ✗ Error processing {match_id}: {error}", file=sys.stderr)
+            left_wins, right_wins = score_up_to(match, matches)
+            if max(left_wins, right_wins) >= wins_required:
+                label = f"Series finished: {radiant} vs {dire} ({left_wins} — {right_wins})"
+                published += announce(ctx, day_states, f"done:{series_key(match)}", "series_finished", match, label, RECENT_EVENT_SECONDS)
             processed += 1
 
-        # Check for day finished
-        day_finished_key = f"day:{day}:finished"
-        if day_finished_key not in announced_in_day:
-            all_finished = all(match_state(m, now) == "finished" for m in day_matches)
-            if all_finished and day_matches:
-                last_match = max(day_matches, key=lambda x: x.get("start_time") or 0)
-                is_recent = (now - (last_match.get("start_time") or 0)) < 3600 * 48
-                any_known = any(str(m["match_id"]) in day_states for m in day_matches)
-                
-                # If the day is finished, we want to show the table even on the first run
-                # but ONLY if it wasn't already marked as announced in the states we just loaded/updated
-                if day_finished_key not in day_states:
-                    try:
-                        publish(webhook_url, message("day_finished", league, last_match, matches, liquipedia, catalog, now))
-                        published += 1
-                        print(f"  ✓ Day {day} finished announcement")
-                        new_day_states[day_finished_key] = "announced"
-                    except RuntimeError as error:
-                        print(f"  ✗ Error announcing end of day {day}: {error}", file=sys.stderr)
-                else:
-                    new_day_states[day_finished_key] = "announced"
-        
-        save_states(new_day_states, day)
+        # The results table closes the day once every game of that day has a result.
+        if all(match_state(m, now) == "finished" for m in day_matches):
+            last_match = max(day_matches, key=match_end_time)
+            published += announce(ctx, day_states, f"day:{day}:finished", "day_finished", last_match, f"Day {day} finished announcement", DAY_EVENT_SECONDS)
+
+        save_states(day_states, day)
 
     states["liquipedia"] = liquipedia
     save_states(states)

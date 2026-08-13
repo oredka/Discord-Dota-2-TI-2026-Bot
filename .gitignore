@@ -9,3 +9,5 @@ __pycache__/
 !states/
 !states/*.json
 *.log
+# Per-day states are committed by the workflow; this file only holds API caches.
+states/match_states.json
