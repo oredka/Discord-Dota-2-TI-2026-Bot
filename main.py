@@ -181,6 +181,32 @@ def score(match: dict, matches: list[dict]) -> tuple[int, int]:
     return radiant_wins, dire_wins
 
 
+def score_up_to(match: dict, matches: list[dict]) -> tuple[int, int]:
+    series_games = games_in_series(match, matches)
+    try:
+        current_game_index = series_games.index(match)
+    except ValueError:
+        return 0, 0
+    games_to_count = series_games[:current_game_index + 1]
+    
+    radiant, dire = teams(match)
+    radiant_wins = dire_wins = 0
+    for game in games_to_count:
+        outcome = game.get("radiant_win")
+        if outcome is None:
+            continue
+        # In games_in_series, teams might be swapped compared to the 'match' object passed.
+        # We need to know who is who.
+        g_radiant, g_dire = teams(game)
+        if g_radiant == radiant: # radiant is still radiant
+            if outcome: radiant_wins += 1
+            else: dire_wins += 1
+        else: # teams swapped
+            if outcome: dire_wins += 1
+            else: radiant_wins += 1
+    return radiant_wins, dire_wins
+
+
 def game_number(match: dict, matches: list[dict]) -> int:
     return games_in_series(match, matches).index(match) + 1
 
@@ -200,7 +226,6 @@ def format_start(unix_time: int | None) -> str:
 def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedia: dict[str, object], catalog: dict[str, dict[str, str]]) -> str:
     radiant, dire = teams(match)
     radiant_label, dire_label = team_label(radiant, catalog), team_label(dire, catalog)
-    first, second = score(match, matches)
     if kind == "tournament_day":
         day = tournament_day(match)
         res = f"📅 **ДЕНЬ {day} THE INTERNATIONAL 2026**\n{MAINCAST_DOTA2_URL}"
@@ -209,16 +234,11 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
         res = f"🔴 **МАТЧ РОЗПОЧАВСЯ**\n{radiant_label} 🆚 {dire_label}\nГра {game_number(match, matches)}"
         return res + "\n\u200b\n"
     if kind == "game_finished":
-        # First check if the series just finished with this game
-        first, second = score(match, matches)
-        wins_required = SERIES_BEST_OF // 2 + 1
-        if max(first, second) >= wins_required:
-            # If series is finished, we usually show series_finished instead
-            # but main loop calls both. To avoid confusion, game_finished can stay simple.
-            pass
-        res = f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{radiant_label} {1 if match.get('radiant_win') else 0} — {0 if match.get('radiant_win') else 1} {dire_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
+        first_up_to, second_up_to = score_up_to(match, matches)
+        res = f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{radiant_label} {first_up_to} — {second_up_to} {dire_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
         return res + "\n\u200b\n"
     
+    first, second = score(match, matches)
     winner_name = radiant if first > second else dire
     res = f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{radiant_label} {first} — {second} {dire_label}\n🥇 Переможець: {team_label(winner_name, catalog)}"
     return res + "\n\u200b\n"
@@ -314,19 +334,20 @@ def main() -> int:
                         print(f"  ✓ Game finished: {radiant} vs {dire} (Match ID: {match_id})")
                     new_states[match_id] = "finished"
 
-                # Check series status
-                first, second = score(match, matches)
+                # Check if this specific match completed the series
+                first_so_far, second_up_to = score_up_to(match, matches)
                 series_state_key = f"done:{series_key(match)}"
                 
                 # Check if this series was already announced as finished in state or this run
                 if new_states.get(series_state_key) != "finished" and series_state_key not in announced_series_in_run:
-                    if max(first, second) >= wins_required:
+                    # A series is finished if one team reaches enough wins
+                    if max(first_so_far, second_up_to) >= wins_required:
                         is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
                         if previous is not None or is_recent:
                             publish(webhook_url, message("series_finished", league, match, matches, liquipedia, catalog))
                             published += 1
-                            winner = radiant if first > second else dire
-                            print(f"  ✓ Series finished: {winner} wins {first} — {second} (Key: {series_state_key})")
+                            winner = radiant if first_so_far > second_up_to else dire
+                            print(f"  ✓ Series finished: {winner} wins {first_so_far} — {second_up_to} (Key: {series_state_key})")
                             announced_series_in_run.add(series_state_key)
                         new_states[series_state_key] = "finished"
         except RuntimeError as error:
