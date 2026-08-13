@@ -19,7 +19,7 @@ OPENDOTA_LEAGUE_ID = 19719
 LIQUIPEDIA_API = "https://liquipedia.net/dota2/api.php"
 LIQUIPEDIA_PAGE = "The_International/2026"
 LIQUIPEDIA_URL = "https://liquipedia.net/dota2/The_International/2026"
-MAINCAST_DOTA2_URL = "https://www.youtube.com/@Dota2_maincast"
+MAINCAST_DOTA2_URL = "https://www.youtube.com/@Dota2_maincast/streams"
 STATE_FILE = Path(os.getenv("STATE_FILE", ".state/match_states.json"))
 TEAM_CATALOG_FILE = Path(os.getenv("TEAM_CATALOG_FILE", "team_metadata.json"))
 SERIES_BEST_OF = int(os.getenv("SERIES_BEST_OF", "3"))
@@ -274,9 +274,11 @@ def main() -> int:
         if day > 0 and current != "scheduled":
             day_state_key = f"day:{day}"
             if new_states.get(day_state_key) != "announced":
-                # Only announce if we were already tracking this match (previous state exists)
-                # This avoids historical spam on the first run.
-                if previous is not None:
+                # Only announce if we are not in historical spam mode (or if user wants it)
+                # For TI 2026 start, we allow announcing the current day even on first run
+                # if the match is recent.
+                is_recent = (now - (match.get("start_time") or 0)) < 3600 * 24 
+                if previous is not None or is_recent:
                     try:
                         publish(webhook_url, message("tournament_day", league, match, matches, liquipedia, catalog))
                         published += 1
@@ -286,30 +288,36 @@ def main() -> int:
                 new_states[day_state_key] = "announced"
         
         try:
-            if current == "live" and previous is not None and previous != "live":
-                publish(webhook_url, message("live", league, match, matches, liquipedia, catalog))
-                new_states[match_id] = "live"
-                published += 1
-                print(f"  ✓ Match started: {radiant} vs {dire}")
-            elif current == "finished":
-                # On first run, remember history without spamming a new channel.
-                if previous is not None and previous != "finished":
-                    publish(webhook_url, message("game_finished", league, match, matches, liquipedia, catalog))
+            if current == "live" and previous != "live":
+                # Announce if it just became live, or if it's the first time we see it and it's recent
+                is_recent = (now - (match.get("start_time") or 0)) < 3600 * 2 # 2 hours
+                if previous is not None or is_recent:
+                    publish(webhook_url, message("live", league, match, matches, liquipedia, catalog))
                     published += 1
-                    print(f"  ✓ Game finished: {radiant} vs {dire} (Match ID: {match_id})")
-                new_states[match_id] = "finished"
+                    print(f"  ✓ Match started: {radiant} vs {dire}")
+                new_states[match_id] = "live"
+            elif current == "finished":
+                if previous != "finished":
+                    # Announce if it just finished, or if it's the first time we see it and it's recent
+                    is_recent = (now - (match.get("start_time") or 0)) < 3600 * 4 # 4 hours
+                    if previous is not None or is_recent:
+                        publish(webhook_url, message("game_finished", league, match, matches, liquipedia, catalog))
+                        published += 1
+                        print(f"  ✓ Game finished: {radiant} vs {dire} (Match ID: {match_id})")
+                    new_states[match_id] = "finished"
 
                 first, second = score(match, matches)
                 series_state_key = f"done:{series_key(match)}"
                 if max(first, second) >= wins_required:
-                    # Only announce series finish if we were tracking this specific game 
-                    # AND the series wasn't already marked as finished in the OLD states.
-                    if previous is not None and states.get(series_state_key) != "finished":
-                        publish(webhook_url, message("series_finished", league, match, matches, liquipedia, catalog))
-                        published += 1
-                        winner = radiant if first > second else dire
-                        print(f"  ✓ Series finished: {winner} wins {first} — {second} (Key: {series_state_key})")
-                    new_states[series_state_key] = "finished"
+                    # Announce series finish if it just happened or if it's recent
+                    is_recent = (now - (match.get("start_time") or 0)) < 3600 * 8 # 8 hours for series
+                    if states.get(series_state_key) != "finished":
+                        if previous is not None or is_recent:
+                            publish(webhook_url, message("series_finished", league, match, matches, liquipedia, catalog))
+                            published += 1
+                            winner = radiant if first > second else dire
+                            print(f"  ✓ Series finished: {winner} wins {first} — {second} (Key: {series_state_key})")
+                        new_states[series_state_key] = "finished"
         except RuntimeError as error:
             print(f"  ✗ Error processing {match_id} ({radiant} vs {dire}): {error}", file=sys.stderr)
         
