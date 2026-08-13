@@ -318,7 +318,7 @@ def format_start(unix_time: int | None) -> str:
     return f"<t:{unix_time}:t>"
 
 
-def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedia: dict[str, object], catalog: dict[str, dict[str, str]], now: int) -> str:
+def message(kind: str, league: dict, match: dict, matches: list[dict], catalog: dict[str, dict[str, str]], now: int) -> str:
     series_games = games_in_series(match, matches)
     first_game = series_games[0]
     left_name = (first_game.get("radiant_name") or "Radiant").strip()
@@ -395,15 +395,15 @@ def announce(ctx: dict, day_states: dict[str, object], key: str, kind: str, matc
         day_states[key] = "announced"
         return False
     try:
-        publish(ctx["webhook_url"], message(kind, ctx["league"], match, ctx["matches"], ctx["liquipedia"], ctx["catalog"], ctx["now"]))
+        publish(ctx["webhook_url"], message(kind, ctx["league"], match, ctx["matches"], ctx["catalog"], ctx["now"]))
         # Small delay to avoid Discord rate limits when re-sending many messages
         time.sleep(0.5)
+        day_states[key] = "announced"
+        print(f"  ✓ {label}")
+        return True
     except RuntimeError as error:
         print(f"  ✗ Error publishing {label}: {error}", file=sys.stderr)
         return False
-    day_states[key] = "announced"
-    print(f"  ✓ {label}")
-    return True
 
 
 def main() -> int:
@@ -442,8 +442,6 @@ def main() -> int:
     published = 0
     wins_required = SERIES_BEST_OF // 2 + 1
     processed = 0
-    
-    print(f"Processing {len(matches)} matches in {len(day_to_matches)} days...")
 
     for day in sorted(day_to_matches.keys()):
         day_matches = day_to_matches[day]
@@ -463,7 +461,8 @@ def main() -> int:
         if has_new_finished_matches and f"day:{day}" not in day_states:
             # Use the first match of the day to trigger the "Day started" message
             first_match = day_matches[0]
-            announce(ctx, day_states, f"day:{day}", "tournament_day", first_match, f"Day {day} announcement")
+            if announce(ctx, day_states, f"day:{day}", "tournament_day", first_match, f"Day {day} announcement"):
+                published += 1
 
         for match in day_matches:
             match_id = str(match["match_id"])
@@ -485,10 +484,15 @@ def main() -> int:
                     if announce(ctx, day_states, series_state_key, "series_finished", match, label):
                         published += 1
             else:
-                # Still need to record that we've seen this series finish if it was already announced
+                # IMPORTANT: If the game was already announced, we MUST still check if the series 
+                # completion needs to be announced. This handles cases where a game was posted 
+                # but the subsequent series message was missed in a previous run.
                 left_wins, right_wins = score_up_to(match, matches)
                 if max(left_wins, right_wins) >= wins_required:
-                    day_states[f"done:{series_key(match)}"] = "announced"
+                    series_state_key = f"done:{series_key(match)}"
+                    label = f"Series finished (delayed): {radiant} vs {dire} ({left_wins} — {right_wins})"
+                    if announce(ctx, day_states, series_state_key, "series_finished", match, label):
+                        published += 1
 
             processed += 1
 
