@@ -106,7 +106,12 @@ def fetch_matches(league_id: int) -> tuple[dict, list[dict]]:
         m["dire_name"] = team_names.get(m.get("dire_team_id"), "Dire")
     
     league = {"displayName": "The International 2026", "id": league_id}
-    return league, sorted(matches, key=lambda item: item.get("start_time") or 0)
+    # Sort strictly: first by tournament day, then by series_id, then by start_time, then by match_id
+    sorted_matches = sorted(
+        matches, 
+        key=lambda x: (tournament_day(x), x.get("series_id") or 0, x.get("start_time") or 0, x.get("match_id") or 0)
+    )
+    return league, sorted_matches
 
 
 def teams(match: dict) -> tuple[str, str]:
