@@ -173,46 +173,51 @@ def games_in_series(match: dict, matches: list[dict]) -> list[dict]:
 
 
 def score(match: dict, matches: list[dict]) -> tuple[int, int]:
-    radiant_id = match.get("radiant_team_id")
-    dire_id = match.get("dire_team_id")
-    radiant_wins = dire_wins = 0
-    for game in games_in_series(match, matches):
+    series_games = games_in_series(match, matches)
+    first_game = series_games[0]
+    left_team_id = first_game.get("radiant_team_id")
+    right_team_id = first_game.get("dire_team_id")
+    
+    left_wins = right_wins = 0
+    for game in series_games:
         outcome = game.get("radiant_win")
         if outcome is None:
             continue
         g_radiant_id = game.get("radiant_team_id")
-        if g_radiant_id == radiant_id:
-            if outcome: radiant_wins += 1
-            else: dire_wins += 1
-        elif g_radiant_id == dire_id:
-            if outcome: dire_wins += 1
-            else: radiant_wins += 1
-    return radiant_wins, dire_wins
+        if g_radiant_id == left_team_id:
+            if outcome: left_wins += 1
+            else: right_wins += 1
+        elif g_radiant_id == right_team_id:
+            if outcome: right_wins += 1
+            else: left_wins += 1
+    return left_wins, right_wins
 
 
 def score_up_to(match: dict, matches: list[dict]) -> tuple[int, int]:
     series_games = games_in_series(match, matches)
+    first_game = series_games[0]
+    left_team_id = first_game.get("radiant_team_id")
+    right_team_id = first_game.get("dire_team_id")
+
     try:
         current_game_index = series_games.index(match)
     except ValueError:
         return 0, 0
     games_to_count = series_games[:current_game_index + 1]
     
-    radiant_id = match.get("radiant_team_id")
-    dire_id = match.get("dire_team_id")
-    radiant_wins = dire_wins = 0
+    left_wins = right_wins = 0
     for game in games_to_count:
         outcome = game.get("radiant_win")
         if outcome is None:
             continue
         g_radiant_id = game.get("radiant_team_id")
-        if g_radiant_id == radiant_id:
-            if outcome: radiant_wins += 1
-            else: dire_wins += 1
-        elif g_radiant_id == dire_id:
-            if outcome: dire_wins += 1
-            else: radiant_wins += 1
-    return radiant_wins, dire_wins
+        if g_radiant_id == left_team_id:
+            if outcome: left_wins += 1
+            else: right_wins += 1
+        elif g_radiant_id == right_team_id:
+            if outcome: right_wins += 1
+            else: left_wins += 1
+    return left_wins, right_wins
 
 
 def game_number(match: dict, matches: list[dict]) -> int:
@@ -232,23 +237,28 @@ def format_start(unix_time: int | None) -> str:
 
 
 def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedia: dict[str, object], catalog: dict[str, dict[str, str]]) -> str:
-    radiant, dire = teams(match)
-    radiant_label, dire_label = team_label(radiant, catalog), team_label(dire, catalog)
+    series_games = games_in_series(match, matches)
+    first_game = series_games[0]
+    left_name = first_game.get("radiant_name") or "Radiant"
+    right_name = first_game.get("dire_name") or "Dire"
+    left_label = team_label(left_name, catalog)
+    right_label = team_label(right_name, catalog)
+
     if kind == "tournament_day":
         day = tournament_day(match)
         res = f"📅 **ДЕНЬ {day} THE INTERNATIONAL 2026**\n{MAINCAST_DOTA2_URL}"
         return res + "\n\u200b\n"
     if kind == "live":
-        res = f"🔴 **МАТЧ РОЗПОЧАВСЯ**\n{radiant_label} 🆚 {dire_label}\nГра {game_number(match, matches)}"
+        res = f"🔴 **МАТЧ РОЗПОЧАВСЯ**\n{left_label} 🆚 {right_label}\nГра {game_number(match, matches)}"
         return res + "\n\u200b\n"
     if kind == "game_finished":
-        first_up_to, second_up_to = score_up_to(match, matches)
-        res = f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{radiant_label} {first_up_to} — {second_up_to} {dire_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
+        left_score, right_score = score_up_to(match, matches)
+        res = f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{left_label} {left_score} — {right_score} {right_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
         return res + "\n\u200b\n"
     
-    first, second = score(match, matches)
-    winner_name = radiant if first > second else dire
-    res = f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{radiant_label} {first} — {second} {dire_label}\n🥇 Переможець: {team_label(winner_name, catalog)}"
+    left_total, right_total = score(match, matches)
+    winner_name = left_name if left_total > right_total else right_name
+    res = f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{left_label} {left_total} — {right_total} {right_label}\n🥇 Переможець: {team_label(winner_name, catalog)}"
     return res + "\n\u200b\n"
 
 
@@ -359,7 +369,13 @@ def main() -> int:
                         if previous is not None or is_recent:
                             publish(webhook_url, message("series_finished", league, match, matches, liquipedia, catalog))
                             published += 1
-                            winner = radiant if first_so_far > second_up_to else dire
+                            # Consistently identify winner based on the same Left/Right logic used in message()
+                            series_games = games_in_series(match, matches)
+                            first_game = series_games[0]
+                            left_name = first_game.get("radiant_name") or "Radiant"
+                            right_name = first_game.get("dire_name") or "Dire"
+                            winner = left_name if first_so_far > second_up_to else right_name
+                            
                             print(f"  ✓ Series finished: {winner} wins {first_so_far} — {second_up_to} (Key: {series_state_key})")
                             announced_series_in_run.add(series_state_key)
                         new_states[series_state_key] = "finished"
