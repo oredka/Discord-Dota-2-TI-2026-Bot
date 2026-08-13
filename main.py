@@ -28,7 +28,7 @@ TI_START_DATE = datetime(2026, 8, 13, tzinfo=UTC)
 # How long after a game ends we still consider its result worth announcing. Anything older is
 # adopted into the state silently, so a lost or fresh state file never floods the channel.
 # Set RECENT_EVENT_SECONDS=0 to force re-send all historical matches if state is cleared.
-RECENT_EVENT_SECONDS = int(os.getenv("RECENT_EVENT_SECONDS", "0"))
+RECENT_EVENT_SECONDS = int(os.getenv("RECENT_EVENT_SECONDS", str(3 * 3600)))
 DAY_EVENT_SECONDS = 0
 # Set to 1 to record every current result in the state without posting anything to Discord.
 SILENT_BOOTSTRAP = os.getenv("SILENT_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes")
@@ -140,7 +140,7 @@ def load_team_catalog() -> dict[str, dict[str, str]]:
 
 
 def team_info(name: str, catalog: dict[str, dict[str, str]]) -> dict[str, str]:
-    return catalog.get(name.casefold(), {})
+    return catalog.get(name.strip().casefold(), {})
 
 
 def team_label(name: str, catalog: dict[str, dict[str, str]]) -> str:
@@ -289,6 +289,10 @@ def standings(matches: list[dict], day: int) -> list[tuple[int, str, int, int]]:
         if tournament_day(match) > day:
             continue
         radiant, dire = teams(match)
+        # Ensure we use stripped names for matching with catalog and consistency
+        radiant = radiant.strip()
+        dire = dire.strip()
+        
         known = [name for name in (radiant, dire) if name not in ("Radiant", "Dire")]
         for name in known:
             stats.setdefault(name, {"wins": 0, "losses": 0})
@@ -327,8 +331,8 @@ def format_start(unix_time: int | None) -> str:
 def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedia: dict[str, object], catalog: dict[str, dict[str, str]], now: int) -> str:
     series_games = games_in_series(match, matches)
     first_game = series_games[0]
-    left_name = first_game.get("radiant_name") or "Radiant"
-    right_name = first_game.get("dire_name") or "Dire"
+    left_name = (first_game.get("radiant_name") or "Radiant").strip()
+    right_name = (first_game.get("dire_name") or "Dire").strip()
     left_label = team_label(left_name, catalog)
     right_label = team_label(right_name, catalog)
 
@@ -478,6 +482,7 @@ def main() -> int:
         for match in day_matches:
             match_id = str(match["match_id"])
             radiant, dire = teams(match)
+            radiant, dire = radiant.strip(), dire.strip()
             if match_state(match, now) != "finished":
                 processed += 1
                 continue
