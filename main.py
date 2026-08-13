@@ -168,7 +168,8 @@ def tournament_day(match: dict) -> int:
 
 
 def games_in_series(match: dict, matches: list[dict]) -> list[dict]:
-    return [game for game in matches if series_key(game) == series_key(match)]
+    series_games = [game for game in matches if series_key(game) == series_key(match)]
+    return sorted(series_games, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))
 
 
 def score(match: dict, matches: list[dict]) -> tuple[int, int]:
