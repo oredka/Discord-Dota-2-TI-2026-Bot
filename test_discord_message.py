@@ -16,7 +16,6 @@ if not webhook_url:
 # Keep text format in sync with main.py message()
 messages = {
     'day': '📅 **ДЕНЬ 1 THE INTERNATIONAL 2026**\nhttps://www.youtube.com/@Dota2_maincast',
-    'live': '🔴 **МАТЧ РОЗПОЧАВСЯ**\n🇪🇺 Team Liquid 🆚 🇨🇳 Xtreme Gaming\nГра 1',
     'game_finished': '🎮 **ГРА 1 ЗАВЕРШИЛАСЯ**\n🇪🇺 Team Liquid 1 — 0 🇨🇳 Xtreme Gaming\n⏱ Тривалість: 42:15',
     'series_finished': '🏆 **МАТЧ ЗАВЕРШИВСЯ**\n🇪🇺 Team Liquid 3 — 1 🇨🇳 Xtreme Gaming\n🥇 Переможець: 🇪🇺 Team Liquid'
 }
