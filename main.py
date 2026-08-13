@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -168,14 +168,23 @@ TI_START_TIMESTAMP = 1786633200  # Aug 13 15:00:00 UTC (Day 1 Start)
 
 
 def tournament_day(match: dict) -> int:
-    """Calculate which tournament day this match is on (1-indexed)."""
-    start_time = match.get("start_time") or 0
-    if start_time == 0:
-        return 1
+    """Calculate which tournament day this match is on (1-indexed) based on UTC time.
+    Each day starts at 00:00 UTC.
+    """
+    start_time = match.get("start_time")
+    if not start_time:
+        return 0
     
-    # Each tournament day is a 24-hour window starting from Aug 13 15:00 UTC
-    day = (start_time - TI_START_TIMESTAMP) // 86400 + 1
-    return max(1, int(day))
+    dt_utc = datetime.fromtimestamp(start_time, UTC)
+    
+    # TI 2026 starts on Aug 13, 2026 UTC
+    start_date_utc = datetime(2026, 8, 13, tzinfo=UTC)
+    
+    # Calculate days since start
+    current_date_utc = datetime(dt_utc.year, dt_utc.month, dt_utc.day, tzinfo=UTC)
+    delta = current_date_utc - start_date_utc
+    
+    return max(1, delta.days + 1)
 
 
 def games_in_series(match: dict, matches: list[dict]) -> list[dict]:
@@ -275,6 +284,10 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
         day = tournament_day(match)
         res = f"📅 **ДЕНЬ {day} THE INTERNATIONAL 2026**\n{MAINCAST_DOTA2_URL}"
         return res + "\n\u200b\n"
+    if kind == "day_finished":
+        day = tournament_day(match)
+        res = f"🏆 **ДЕНЬ {day} THE INTERNATIONAL 2026 ЗАВЕРШИВСЯ**"
+        return res + "\n\u200b\n"
     if kind == "game_finished":
         left_score, right_score = score_up_to(match, matches)
         res = f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{left_label} {left_score} — {right_score} {right_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
@@ -330,17 +343,28 @@ def main() -> int:
     print(f"Processing {len(matches)} matches with BO{SERIES_BEST_OF} format (need {wins_required} wins to clinch)...")
 
     # Track tournament days and series to announce each once per run
-    # Use a dictionary to track which match triggered the day announcement to avoid duplicates
-    announced_days_in_run = set()
+    # Use a set to track which days were already announced in this run or previous runs
+    announced_days = set()
+    announced_finished_days = set()
     announced_series_in_run = set()
     
     # Pre-announced days from saved state
     for k, v in states.items():
         if k.startswith("day:") and v == "announced":
-            day_num = int(k.split(":")[1])
-            announced_days_in_run.add(day_num)
+            try:
+                parts = k.split(":")
+                day_num = int(parts[1])
+                if len(parts) > 2 and parts[2] == "finished":
+                    announced_finished_days.add(day_num)
+                else:
+                    announced_days.add(day_num)
+            except (ValueError, IndexError, TypeError):
+                continue
 
-    for match in matches:
+    # Sort matches by start time to process them chronologically
+    sorted_matches = sorted(matches, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))
+
+    for match in sorted_matches:
         match_id = str(match["match_id"])
         current = match_state(match, now)
         previous = states.get(match_id)
@@ -351,8 +375,7 @@ def main() -> int:
         # Only announce if the day has already started (match is finished)
         if day > 0 and current != "scheduled":
             day_state_key = f"day:{day}"
-            # Check both saved state and current run tracking
-            if day not in announced_days_in_run:
+            if day not in announced_days:
                 # Only announce if we are not in historical spam mode
                 is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
                 if previous is not None or is_recent:
@@ -360,14 +383,14 @@ def main() -> int:
                         publish(webhook_url, message("tournament_day", league, match, matches, liquipedia, catalog))
                         published += 1
                         print(f"  ✓ Day {day} announcement")
-                        announced_days_in_run.add(day)
+                        announced_days.add(day)
                         new_states[day_state_key] = "announced"
                     except RuntimeError as error:
                         print(f"  ✗ Error announcing day {day}: {error}", file=sys.stderr)
                 else:
                     # Even if not recent, mark as announced to avoid future checks
                     new_states[day_state_key] = "announced"
-                    announced_days_in_run.add(day)
+                    announced_days.add(day)
         
         try:
             if current == "finished":
@@ -412,6 +435,41 @@ def main() -> int:
             print(f"  ✗ Error processing {match_id} ({radiant} vs {dire}): {error}", file=sys.stderr)
         
         processed += 1
+
+    # Second pass for day finished announcements
+    day_to_matches = {}
+    for match in sorted_matches:
+        d = tournament_day(match)
+        if d > 0:
+            if d not in day_to_matches:
+                day_to_matches[d] = []
+            day_to_matches[d].append(match)
+
+    for day_num, day_matches in day_to_matches.items():
+        if day_num not in announced_finished_days:
+            # Check if all matches for this day are finished
+            all_finished = all(match_state(m, now) == "finished" for m in day_matches)
+            if all_finished and day_matches:
+                # To avoid announcing days that ended long ago in a new setup,
+                # we check if at least one match was finished recently or was in states
+                last_match = max(day_matches, key=lambda x: x.get("start_time") or 0)
+                is_recent = (now - (last_match.get("start_time") or 0)) < 3600 * 48
+                
+                # Check if any match from this day was previously known (to avoid historical spam)
+                any_known = any(str(m["match_id"]) in states for m in day_matches)
+                
+                if any_known or is_recent:
+                    try:
+                        publish(webhook_url, message("day_finished", league, last_match, matches, liquipedia, catalog))
+                        published += 1
+                        print(f"  ✓ Day {day_num} finished announcement")
+                        new_states[f"day:{day_num}:finished"] = "announced"
+                        announced_finished_days.add(day_num)
+                    except RuntimeError as error:
+                        print(f"  ✗ Error announcing end of day {day_num}: {error}", file=sys.stderr)
+                else:
+                    new_states[f"day:{day_num}:finished"] = "announced"
+                    announced_finished_days.add(day_num)
 
     new_states["liquipedia"] = liquipedia
     save_states(new_states)
