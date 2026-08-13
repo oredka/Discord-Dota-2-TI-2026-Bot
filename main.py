@@ -203,9 +203,11 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
     first, second = score(match, matches)
     if kind == "tournament_day":
         day = tournament_day(match)
-        return f"📅 **ДЕНЬ {day} THE INTERNATIONAL 2026**\n{MAINCAST_DOTA2_URL}"
+        res = f"📅 **ДЕНЬ {day} THE INTERNATIONAL 2026**\n{MAINCAST_DOTA2_URL}"
+        return res + "\n\n" + "─" * 25
     if kind == "live":
-        return f"🔴 **МАТЧ РОЗПОЧАВСЯ**\n{radiant_label} 🆚 {dire_label}\nГра {game_number(match, matches)}"
+        res = f"🔴 **МАТЧ РОЗПОЧАВСЯ**\n{radiant_label} 🆚 {dire_label}\nГра {game_number(match, matches)}"
+        return res + "\n\n" + "─" * 25
     if kind == "game_finished":
         # First check if the series just finished with this game
         first, second = score(match, matches)
@@ -214,10 +216,12 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
             # If series is finished, we usually show series_finished instead
             # but main loop calls both. To avoid confusion, game_finished can stay simple.
             pass
-        return f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{radiant_label} {1 if match.get('radiant_win') else 0} — {0 if match.get('radiant_win') else 1} {dire_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
+        res = f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{radiant_label} {1 if match.get('radiant_win') else 0} — {0 if match.get('radiant_win') else 1} {dire_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
+        return res + "\n\n" + "─" * 25
     
     winner_name = radiant if first > second else dire
-    return f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{radiant_label} {first} — {second} {dire_label}\n🥇 Переможець: {team_label(winner_name, catalog)}"
+    res = f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{radiant_label} {first} — {second} {dire_label}\n🥇 Переможець: {team_label(winner_name, catalog)}"
+    return res + "\n\n" + "─" * 25
 
 
 def load_states() -> dict[str, object]:
