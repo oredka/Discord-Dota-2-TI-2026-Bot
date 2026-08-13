@@ -204,10 +204,10 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
     if kind == "tournament_day":
         day = tournament_day(match)
         res = f"📅 **ДЕНЬ {day} THE INTERNATIONAL 2026**\n{MAINCAST_DOTA2_URL}"
-        return res + "\n\n"
+        return res + "\n\u200b\n"
     if kind == "live":
         res = f"🔴 **МАТЧ РОЗПОЧАВСЯ**\n{radiant_label} 🆚 {dire_label}\nГра {game_number(match, matches)}"
-        return res + "\n\n"
+        return res + "\n\u200b\n"
     if kind == "game_finished":
         # First check if the series just finished with this game
         first, second = score(match, matches)
@@ -217,11 +217,11 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
             # but main loop calls both. To avoid confusion, game_finished can stay simple.
             pass
         res = f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{radiant_label} {1 if match.get('radiant_win') else 0} — {0 if match.get('radiant_win') else 1} {dire_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
-        return res + "\n\n"
+        return res + "\n\u200b\n"
     
     winner_name = radiant if first > second else dire
     res = f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{radiant_label} {first} — {second} {dire_label}\n🥇 Переможець: {team_label(winner_name, catalog)}"
-    return res + "\n\n"
+    return res + "\n\u200b\n"
 
 
 def load_states() -> dict[str, object]:
