@@ -20,7 +20,7 @@ LIQUIPEDIA_API = "https://liquipedia.net/dota2/api.php"
 LIQUIPEDIA_PAGE = "The_International/2026"
 LIQUIPEDIA_URL = "https://liquipedia.net/dota2/The_International/2026"
 MAINCAST_DOTA2_URL = "https://www.youtube.com/@Dota2_maincast/streams"
-STATE_FILE = Path(os.getenv("STATE_FILE", ".state/match_states.json"))
+STATE_FILE = Path(os.getenv("STATE_FILE", "states/match_states.json"))
 TEAM_CATALOG_FILE = Path(os.getenv("TEAM_CATALOG_FILE", "team_metadata.json"))
 SERIES_BEST_OF = int(os.getenv("SERIES_BEST_OF", "3"))
 LIQUIPEDIA_CACHE_SECONDS = 600
@@ -312,8 +312,7 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
         )
         
         table = "```\n"
-        table += f"{'Команда':<24} | {'Рахунок':<7} | {'Місце':<5}\n"
-        table += "-" * 42 + "\n"
+        table += f"{'Команда':<24}  {'Рахунок':<7}  {'Місце':<5}\n"
         
         for i, name in enumerate(sorted_teams):
             stats = team_stats[name]
@@ -323,22 +322,18 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
             label = team_label(name, catalog)
             
             # Check if team is eliminated
-            team_id = next((m.get("radiant_team_id") for m in matches if m.get("radiant_name") == name), None) or \
-                      next((m.get("dire_team_id") for m in matches if m.get("dire_name") == name), None)
+            # In TI group stage, teams are only eliminated at the end of groups.
+            # For now, we just show the rank.
+            place = str(i + 1)
             
-            is_eliminated = False
-            if team_id:
-                has_remaining = any(
-                    (m.get("radiant_team_id") == team_id or m.get("dire_team_id") == team_id) 
-                    and match_state(m, now) == "scheduled"
-                    for m in matches
-                )
-                if not has_remaining:
-                    is_eliminated = True
-            
-            place = "вибули" if is_eliminated else str(i + 1)
-            # Use fixed width for the label including emoji (which might be 2 chars wide)
-            table += f"{label:<24} | {score_str:<7} | {place:<5}\n"
+            # Manual padding to account for emoji width in Discord's code blocks.
+            # Flags and emojis in Discord code blocks usually take the width of 2 standard chars.
+            # 'label' is 'flag + space + name'.
+            # Visual width = 2 (flag) + 1 (space) + len(name) = 3 + len(name).
+            # We want total visual width to be 24.
+            padding_len = 24 - (len(name) + 3)
+            padding = " " * max(0, padding_len)
+            table += f"{label}{padding}  {score_str:<7}  {place:<5}\n"
         table += "```"
 
         res = f"🏆 **ДЕНЬ {day} THE INTERNATIONAL 2026 ЗАВЕРШИВСЯ**\n{table}"
@@ -410,6 +405,11 @@ def main() -> int:
                 day_to_matches[d] = []
             day_to_matches[d].append(match)
     
+    # Check if this is the first run ever (no state file at all)
+    is_first_run = not states and not any(STATE_FILE.with_name(f"match_states_day{d}.json").exists() for d in day_to_matches)
+    if is_first_run:
+        print("First run detected. Initializing state without sending messages for existing matches.")
+
     published = 0
     wins_required = SERIES_BEST_OF // 2 + 1
     processed = 0
@@ -443,7 +443,7 @@ def main() -> int:
                 day_state_key = f"day:{day}"
                 if day_state_key not in announced_in_day:
                     is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
-                    if previous is not None or is_recent:
+                    if not is_first_run and (previous is not None or is_recent):
                         try:
                             publish(webhook_url, message("tournament_day", league, match, matches, liquipedia, catalog, now))
                             published += 1
@@ -465,7 +465,7 @@ def main() -> int:
 
                     if previous != "finished":
                         is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
-                        if previous is not None or is_recent:
+                        if not is_first_run and (previous is not None or is_recent):
                             if not is_series_clinching:
                                 publish(webhook_url, message("game_finished", league, match, matches, liquipedia, catalog, now))
                                 published += 1
@@ -475,7 +475,7 @@ def main() -> int:
                     if series_state_key not in announced_in_day:
                         if is_series_clinching:
                             is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
-                            if previous is not None or is_recent:
+                            if not is_first_run and (previous is not None or is_recent):
                                 publish(webhook_url, message("series_finished", league, match, matches, liquipedia, catalog, now))
                                 published += 1
                                 series_games = games_in_series(match, matches)
@@ -498,7 +498,7 @@ def main() -> int:
                 is_recent = (now - (last_match.get("start_time") or 0)) < 3600 * 48
                 any_known = any(str(m["match_id"]) in day_states for m in day_matches)
                 
-                if any_known or is_recent:
+                if not is_first_run and (any_known or is_recent):
                     try:
                         publish(webhook_url, message("day_finished", league, last_match, matches, liquipedia, catalog, now))
                         published += 1
