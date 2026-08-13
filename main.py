@@ -28,7 +28,7 @@ TI_START_DATE = datetime(2026, 8, 13, tzinfo=UTC)
 # How long after a game ends we still consider its result worth announcing. Anything older is
 # adopted into the state silently, so a lost or fresh state file never floods the channel.
 # Set RECENT_EVENT_SECONDS=0 to force re-send all historical matches if state is cleared.
-RECENT_EVENT_SECONDS = int(os.getenv("RECENT_EVENT_SECONDS", str(3 * 3600)))
+RECENT_EVENT_SECONDS = int(os.getenv("RECENT_EVENT_SECONDS", "0"))
 DAY_EVENT_SECONDS = 0
 # Set to 1 to record every current result in the state without posting anything to Discord.
 SILENT_BOOTSTRAP = os.getenv("SILENT_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes")
@@ -477,7 +477,7 @@ def main() -> int:
         if has_new_finished_matches and f"day:{day}" not in day_states:
             # Use the first match of the day to trigger the "Day started" message
             first_match = day_matches[0]
-            published += announce(ctx, day_states, f"day:{day}", "tournament_day", first_match, f"Day {day} announcement", DAY_EVENT_SECONDS)
+            announce(ctx, day_states, f"day:{day}", "tournament_day", first_match, f"Day {day} announcement", DAY_EVENT_SECONDS)
 
         for match in day_matches:
             match_id = str(match["match_id"])
@@ -489,13 +489,15 @@ def main() -> int:
 
             # Check if this match was already announced in this day's state
             if match_id not in day_states:
-                published += announce(ctx, day_states, match_id, "game_finished", match, f"Game finished: {radiant} vs {dire} (Match ID: {match_id})", RECENT_EVENT_SECONDS)
+                if announce(ctx, day_states, match_id, "game_finished", match, f"Game finished: {radiant} vs {dire} (Match ID: {match_id})", RECENT_EVENT_SECONDS):
+                    published += 1
 
                 left_wins, right_wins = score_up_to(match, matches)
                 if max(left_wins, right_wins) >= wins_required:
                     series_state_key = f"done:{series_key(match)}"
                     label = f"Series finished: {radiant} vs {dire} ({left_wins} — {right_wins})"
-                    published += announce(ctx, day_states, series_state_key, "series_finished", match, label, RECENT_EVENT_SECONDS)
+                    if announce(ctx, day_states, series_state_key, "series_finished", match, label, RECENT_EVENT_SECONDS):
+                        published += 1
             else:
                 # Still need to record that we've seen this series finish if it was already announced
                 left_wins, right_wins = score_up_to(match, matches)
@@ -507,7 +509,8 @@ def main() -> int:
         # The results table closes the day once every game of that day has a result.
         if all(match_state(m, now) == "finished" for m in day_matches):
             last_match = max(day_matches, key=match_end_time)
-            published += announce(ctx, day_states, f"day:{day}:finished", "day_finished", last_match, f"Day {day} finished announcement", DAY_EVENT_SECONDS)
+            if announce(ctx, day_states, f"day:{day}:finished", "day_finished", last_match, f"Day {day} finished announcement", DAY_EVENT_SECONDS):
+                published += 1
 
         save_states(day_states, day)
 
