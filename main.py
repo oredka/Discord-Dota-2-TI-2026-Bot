@@ -197,11 +197,13 @@ def tournament_day(match: dict) -> int:
     # TI 2026 starts on Aug 13, 2026 UTC
     start_date_utc = datetime(2026, 8, 13, tzinfo=UTC)
     
-    # Calculate days since start
+    # Calculate days since start (00:00 UTC of each day)
     current_date_utc = datetime(dt_utc.year, dt_utc.month, dt_utc.day, tzinfo=UTC)
     delta = current_date_utc - start_date_utc
     
-    return max(1, delta.days + 1)
+    day = delta.days + 1
+    # If the match is before the official start day, it's day 1 (pre-tournament or early games)
+    return max(1, day)
 
 
 def games_in_series(match: dict, matches: list[dict]) -> list[dict]:
@@ -461,6 +463,18 @@ def main() -> int:
         # Every announcement is keyed in this dict, so a repeated run publishes nothing new.
         day_states = load_states(day)
 
+        # Ensure Day X announcement is sent first if we are announcing anything from this day
+        # and it hasn't been announced yet.
+        has_new_finished_matches = any(
+            str(m["match_id"]) not in day_states and match_state(m, now) == "finished" 
+            for m in day_matches
+        )
+        
+        if has_new_finished_matches and f"day:{day}" not in day_states:
+            # Use the first match of the day to trigger the "Day started" message
+            first_match = day_matches[0]
+            published += announce(ctx, day_states, f"day:{day}", "tournament_day", first_match, f"Day {day} announcement", DAY_EVENT_SECONDS)
+
         for match in day_matches:
             match_id = str(match["match_id"])
             radiant, dire = teams(match)
@@ -470,10 +484,6 @@ def main() -> int:
 
             # Check if this match was already announced in this day's state
             if match_id not in day_states:
-                # Only announce Day X once per day
-                if f"day:{day}" not in day_states:
-                    published += announce(ctx, day_states, f"day:{day}", "tournament_day", match, f"Day {day} announcement", DAY_EVENT_SECONDS)
-                
                 published += announce(ctx, day_states, match_id, "game_finished", match, f"Game finished: {radiant} vs {dire} (Match ID: {match_id})", RECENT_EVENT_SECONDS)
 
                 left_wins, right_wins = score_up_to(match, matches)
@@ -482,10 +492,6 @@ def main() -> int:
                     label = f"Series finished: {radiant} vs {dire} ({left_wins} — {right_wins})"
                     published += announce(ctx, day_states, series_state_key, "series_finished", match, label, RECENT_EVENT_SECONDS)
             else:
-                # If game was announced, ensure we still announce Day X if it was somehow skipped
-                if f"day:{day}" not in day_states:
-                    published += announce(ctx, day_states, f"day:{day}", "tournament_day", match, f"Day {day} announcement", DAY_EVENT_SECONDS)
-
                 # Still need to record that we've seen this series finish if it was already announced
                 left_wins, right_wins = score_up_to(match, matches)
                 if max(left_wins, right_wins) >= wins_required:
