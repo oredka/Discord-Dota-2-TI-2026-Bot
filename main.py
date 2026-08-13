@@ -12,7 +12,10 @@ from urllib.parse import urlencode
 
 import requests
 
-STRATZ_ENDPOINT = "https://api.stratz.com/graphql"
+STRATZ_CACHE_SECONDS = 300
+OPENDOTA_CACHE_SECONDS = 300
+OPENDOTA_API_ENDPOINT = "https://api.opendota.com/api"
+OPENDOTA_LEAGUE_ID = 19719
 LIQUIPEDIA_API = "https://liquipedia.net/dota2/api.php"
 LIQUIPEDIA_PAGE = "The_International/2026"
 LIQUIPEDIA_URL = "https://liquipedia.net/dota2/The_International/2026"
@@ -21,26 +24,11 @@ STATE_FILE = Path(os.getenv("STATE_FILE", ".state/match_states.json"))
 TEAM_CATALOG_FILE = Path(os.getenv("TEAM_CATALOG_FILE", "team_metadata.json"))
 SERIES_BEST_OF = int(os.getenv("SERIES_BEST_OF", "3"))
 LIQUIPEDIA_CACHE_SECONDS = 600
-STRATZ_CACHE_SECONDS = 300
 TI_START_DATE = datetime(2026, 8, 13, tzinfo=UTC)
 
-QUERY = """
-query LeagueMatches($leagueId: Int!) {
-  league(id: $leagueId) {
-    id
-    displayName
-    matches(request: { take: 50, skip: 0 }) {
-      id
-      startDateTime
-      durationSeconds
-      didRadiantWin
-      seriesId
-      radiantTeam { name }
-      direTeam { name }
-    }
-  }
-}
-"""
+# Deprecated STRATZ settings
+STRATZ_ENDPOINT = "https://api.stratz.com/graphql"
+QUERY = ""
 
 
 def require(name: str) -> str:
@@ -85,37 +73,44 @@ def liquipedia_context(states: dict[str, object]) -> dict[str, object]:
         return cached if isinstance(cached, dict) else {"fetched_at": time.time()}
 
 
-def fetch_matches_cached(states: dict[str, object], token: str, league_id: int) -> tuple[dict, list[dict]]:
-    """Fetch from STRATZ with caching to reduce API calls."""
-    cached = states.get("stratz_cache")
-    if isinstance(cached, dict) and time.time() - cached.get("fetched_at", 0) < STRATZ_CACHE_SECONDS:
-        print(f"Using cached STRATZ data (age: {int(time.time() - cached.get('fetched_at', 0))}s).")
+def fetch_matches_cached(states: dict[str, object], league_id: int) -> tuple[dict, list[dict]]:
+    """Fetch from OpenDota with caching to reduce API calls."""
+    cached = states.get("opendota_cache")
+    if isinstance(cached, dict) and time.time() - cached.get("fetched_at", 0) < OPENDOTA_CACHE_SECONDS:
+        print(f"Using cached OpenDota data (age: {int(time.time() - cached.get('fetched_at', 0))}s).")
         return cached.get("league", {}), cached.get("matches", [])
     
     try:
-        league, matches = fetch_matches(token, league_id)
-        states["stratz_cache"] = {"fetched_at": time.time(), "league": league, "matches": matches}
-        print(f"Fetched {len(matches)} matches from STRATZ.")
+        league, matches = fetch_matches(league_id)
+        states["opendota_cache"] = {"fetched_at": time.time(), "league": league, "matches": matches}
+        print(f"Fetched {len(matches)} matches from OpenDota.")
         return league, matches
     except RuntimeError as error:
         if isinstance(cached, dict):
-            print(f"Error: {error}; using stale STRATZ cache.", file=sys.stderr)
+            print(f"Error: {error}; using stale OpenDota cache.", file=sys.stderr)
             return cached.get("league", {}), cached.get("matches", [])
         raise
 
 
-def fetch_matches(token: str, league_id: int) -> tuple[dict, list[dict]]:
-    response = post_json(STRATZ_ENDPOINT, {"query": QUERY, "variables": {"leagueId": league_id}}, {"Authorization": f"Bearer {token}", "User-Agent": "ti2026-discord-webhook/1.0"})
-    if response.get("errors"):
-        raise RuntimeError("STRATZ GraphQL error: " + "; ".join(item.get("message", "Unknown error") for item in response["errors"]))
-    league = response.get("data", {}).get("league")
-    if not league:
-        raise RuntimeError("STRATZ did not return this league. Verify STRATZ_LEAGUE_ID.")
-    return league, sorted(league.get("matches") or [], key=lambda item: item.get("startDateTime") or 0)
+def fetch_matches(league_id: int) -> tuple[dict, list[dict]]:
+    # 1. Fetch matches
+    matches = get_json(f"{OPENDOTA_API_ENDPOINT}/leagues/{league_id}/matches", {"User-Agent": "ti2026-discord-webhook/1.0"})
+    
+    # 2. Fetch teams to map names
+    teams_data = get_json(f"{OPENDOTA_API_ENDPOINT}/leagues/{league_id}/teams", {"User-Agent": "ti2026-discord-webhook/1.0"})
+    team_names = {t["team_id"]: t["name"] for t in teams_data}
+    
+    # 3. Enrich matches with team names
+    for m in matches:
+        m["radiant_name"] = team_names.get(m.get("radiant_team_id"), "Radiant")
+        m["dire_name"] = team_names.get(m.get("dire_team_id"), "Dire")
+    
+    league = {"displayName": "The International 2026", "id": league_id}
+    return league, sorted(matches, key=lambda item: item.get("start_time") or 0)
 
 
 def teams(match: dict) -> tuple[str, str]:
-    return ((match.get("radiantTeam") or {}).get("name") or "Radiant", (match.get("direTeam") or {}).get("name") or "Dire")
+    return (match.get("radiant_name") or "Radiant", match.get("dire_name") or "Dire")
 
 
 def load_team_catalog() -> dict[str, dict[str, str]]:
@@ -146,21 +141,21 @@ def discord_color(value: str) -> int:
 
 
 def match_state(match: dict, now: int) -> str:
-    if match.get("didRadiantWin") is not None:
+    if match.get("radiant_win") is not None:
         return "finished"
-    return "scheduled" if (match.get("startDateTime") or 0) > now else "live"
+    return "scheduled" if (match.get("start_time") or 0) > now else "live"
 
 
 def series_key(match: dict) -> str:
-    if match.get("seriesId"):
-        return f"series:{match['seriesId']}"
+    if match.get("series_id"):
+        return f"series:{match['series_id']}"
     team_names = "|".join(sorted(teams(match)))
-    return f"pair:{team_names}:{(match.get('startDateTime') or 0) // 86400}"
+    return f"pair:{team_names}:{(match.get('start_time') or 0) // 86400}"
 
 
 def tournament_day(match: dict) -> int:
     """Calculate which tournament day this match is on (1-indexed)."""
-    start_time = match.get("startDateTime") or 0
+    start_time = match.get("start_time") or 0
     if start_time == 0:
         return 0
     day_diff = (start_time // 86400) - (int(TI_START_DATE.timestamp()) // 86400)
@@ -175,7 +170,7 @@ def score(match: dict, matches: list[dict]) -> tuple[int, int]:
     radiant, dire = teams(match)
     radiant_wins = dire_wins = 0
     for game in games_in_series(match, matches):
-        outcome = game.get("didRadiantWin")
+        outcome = game.get("radiant_win")
         if outcome is None:
             continue
         winner = teams(game)[0] if outcome else teams(game)[1]
@@ -212,7 +207,7 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
     if kind == "live":
         return f"🔴 **МАТЧ РОЗПОЧАВСЯ**\n{radiant_label} 🆚 {dire_label}\nГра {game_number(match, matches)}"
     if kind == "game_finished":
-        return f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{radiant_label} {first} — {second} {dire_label}\n⏱ Тривалість: {format_duration(match.get('durationSeconds'))}"
+        return f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{radiant_label} {first} — {second} {dire_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
     winner = radiant if first > second else dire
     return f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{radiant_label} {first} — {second} {dire_label}\n🥇 Переможець: {team_label(winner, catalog)}"
 
@@ -251,7 +246,7 @@ def main() -> int:
     liquipedia = liquipedia_context(states)
     catalog = load_team_catalog()
     
-    league, matches = fetch_matches_cached(states, require("STRATZ_API_TOKEN"), int(require("STRATZ_LEAGUE_ID")))
+    league, matches = fetch_matches_cached(states, OPENDOTA_LEAGUE_ID)
     
     new_states = dict(states)
     published = 0
