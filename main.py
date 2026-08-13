@@ -167,17 +167,20 @@ def games_in_series(match: dict, matches: list[dict]) -> list[dict]:
 
 
 def score(match: dict, matches: list[dict]) -> tuple[int, int]:
-    radiant, dire = teams(match)
+    radiant_id = match.get("radiant_team_id")
+    dire_id = match.get("dire_team_id")
     radiant_wins = dire_wins = 0
     for game in games_in_series(match, matches):
         outcome = game.get("radiant_win")
         if outcome is None:
             continue
-        winner = teams(game)[0] if outcome else teams(game)[1]
-        if winner == radiant:
-            radiant_wins += 1
-        elif winner == dire:
-            dire_wins += 1
+        g_radiant_id = game.get("radiant_team_id")
+        if g_radiant_id == radiant_id:
+            if outcome: radiant_wins += 1
+            else: dire_wins += 1
+        elif g_radiant_id == dire_id:
+            if outcome: dire_wins += 1
+            else: radiant_wins += 1
     return radiant_wins, dire_wins
 
 
@@ -189,19 +192,18 @@ def score_up_to(match: dict, matches: list[dict]) -> tuple[int, int]:
         return 0, 0
     games_to_count = series_games[:current_game_index + 1]
     
-    radiant, dire = teams(match)
+    radiant_id = match.get("radiant_team_id")
+    dire_id = match.get("dire_team_id")
     radiant_wins = dire_wins = 0
     for game in games_to_count:
         outcome = game.get("radiant_win")
         if outcome is None:
             continue
-        # In games_in_series, teams might be swapped compared to the 'match' object passed.
-        # We need to know who is who.
-        g_radiant, g_dire = teams(game)
-        if g_radiant == radiant: # radiant is still radiant
+        g_radiant_id = game.get("radiant_team_id")
+        if g_radiant_id == radiant_id:
             if outcome: radiant_wins += 1
             else: dire_wins += 1
-        else: # teams swapped
+        elif g_radiant_id == dire_id:
             if outcome: dire_wins += 1
             else: radiant_wins += 1
     return radiant_wins, dire_wins
