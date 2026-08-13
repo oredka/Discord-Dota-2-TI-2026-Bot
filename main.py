@@ -28,8 +28,8 @@ TI_START_DATE = datetime(2026, 8, 13, tzinfo=UTC)
 # How long after a game ends we still consider its result worth announcing. Anything older is
 # adopted into the state silently, so a lost or fresh state file never floods the channel.
 # Set RECENT_EVENT_SECONDS=0 to force re-send all historical matches if state is cleared.
-RECENT_EVENT_SECONDS = int(os.getenv("RECENT_EVENT_SECONDS", "0"))
-DAY_EVENT_SECONDS = 0
+RECENT_EVENT_SECONDS = int(os.getenv("RECENT_EVENT_SECONDS", str(3 * 3600)))
+DAY_EVENT_SECONDS = int(os.getenv("DAY_EVENT_SECONDS", str(6 * 3600)))
 # Set to 1 to record every current result in the state without posting anything to Discord.
 SILENT_BOOTSTRAP = os.getenv("SILENT_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes")
 
