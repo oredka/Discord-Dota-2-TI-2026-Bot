@@ -30,10 +30,8 @@ jobs:
       - name: Debug variables
         run: |
           echo "DISCORD_WEBHOOK_URL length: ${#DISCORD_WEBHOOK_URL}"
-          echo "STRATZ_API_TOKEN length: ${#STRATZ_API_TOKEN}"
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          STRATZ_API_TOKEN: ${{ secrets.STRATZ_API_TOKEN }}
 
       - name: Send test Discord message
         env:

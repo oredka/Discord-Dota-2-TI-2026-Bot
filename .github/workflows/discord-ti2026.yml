@@ -19,8 +19,6 @@ jobs:
     # Do not create another commit when the state-only commit starts this workflow.
     if: github.actor != 'github-actions[bot]'
     env:
-      STRATZ_API_TOKEN: ${{ secrets.STRATZ_API_TOKEN }}
-      STRATZ_LEAGUE_ID: ${{ vars.STRATZ_LEAGUE_ID }}
       SERIES_BEST_OF: ${{ vars.SERIES_BEST_OF || '3' }}
       LIQUIPEDIA_USER_AGENT: ${{ vars.LIQUIPEDIA_USER_AGENT || 'TI2026DiscordBot/1.0 (GitHub Actions)' }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
