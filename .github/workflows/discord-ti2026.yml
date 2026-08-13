@@ -8,9 +8,8 @@ on:
       - 'team_metadata.json'
       - '.github/workflows/discord-ti2026.yml'
   schedule:
-    # Every 10 minutes during tournament hours (00:00-20:00 UTC)
-    # This interval is optimal for GitHub Actions stability and resource usage.
-    - cron: "*/10 0-20 13-24 8 *"
+    # Every 10 minutes (broad coverage)
+    - cron: "*/10 * 13-24 8 *"
   workflow_dispatch:
 
 permissions:
