@@ -390,7 +390,8 @@ def main() -> int:
                     new_states[match_id] = "finished"
 
                 # Check if this series was already announced as finished in state or this run
-                if new_states.get(series_state_key) != "finished" and series_state_key not in announced_series_in_run:
+                series_was_announced = states.get(series_state_key) == "finished"
+                if not series_was_announced and series_state_key not in announced_series_in_run:
                     # A series is finished if one team reaches enough wins
                     if is_series_clinching:
                         is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
