@@ -284,7 +284,7 @@ def main() -> int:
             day_state_key = f"day:{day}"
             if new_states.get(day_state_key) != "announced" and day not in announced_days_in_run:
                 # Only announce if we are not in historical spam mode
-                is_recent = (now - (match.get("start_time") or 0)) < 3600 * 24 
+                is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
                 if previous is not None or is_recent:
                     try:
                         publish(webhook_url, message("tournament_day", league, match, matches, liquipedia, catalog))
@@ -298,7 +298,7 @@ def main() -> int:
         try:
             if current == "live" and previous != "live":
                 # Announce if it just became live, or if it's the first time we see it and it's recent
-                is_recent = (now - (match.get("start_time") or 0)) < 3600 * 2 # 2 hours
+                is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
                 if previous is not None or is_recent:
                     publish(webhook_url, message("live", league, match, matches, liquipedia, catalog))
                     published += 1
@@ -307,7 +307,7 @@ def main() -> int:
             elif current == "finished":
                 if previous != "finished":
                     # Announce if it just finished, or if it's the first time we see it and it's recent
-                    is_recent = (now - (match.get("start_time") or 0)) < 3600 * 4 # 4 hours
+                    is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
                     if previous is not None or is_recent:
                         publish(webhook_url, message("game_finished", league, match, matches, liquipedia, catalog))
                         published += 1
@@ -321,7 +321,7 @@ def main() -> int:
                 # Check if this series was already announced as finished in state or this run
                 if new_states.get(series_state_key) != "finished" and series_state_key not in announced_series_in_run:
                     if max(first, second) >= wins_required:
-                        is_recent = (now - (match.get("start_time") or 0)) < 3600 * 8 # 8 hours for series
+                        is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
                         if previous is not None or is_recent:
                             publish(webhook_url, message("series_finished", league, match, matches, liquipedia, catalog))
                             published += 1
