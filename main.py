@@ -27,8 +27,9 @@ LIQUIPEDIA_CACHE_SECONDS = 600
 TI_START_DATE = datetime(2026, 8, 13, tzinfo=UTC)
 # How long after a game ends we still consider its result worth announcing. Anything older is
 # adopted into the state silently, so a lost or fresh state file never floods the channel.
-RECENT_EVENT_SECONDS = 3 * 3600
-DAY_EVENT_SECONDS = 6 * 3600
+# Set RECENT_EVENT_SECONDS=0 to force re-send all historical matches if state is cleared.
+RECENT_EVENT_SECONDS = int(os.getenv("RECENT_EVENT_SECONDS", "0"))
+DAY_EVENT_SECONDS = 0
 # Set to 1 to record every current result in the state without posting anything to Discord.
 SILENT_BOOTSTRAP = os.getenv("SILENT_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes")
 
@@ -394,11 +395,17 @@ def announce(ctx: dict, day_states: dict[str, object], key: str, kind: str, matc
     """
     if key in day_states:
         return False
-    if SILENT_BOOTSTRAP or not is_recent_match(match, ctx["now"], window):
+    
+    # If RECENT_EVENT_SECONDS is 0, we treat everything as recent (force re-send)
+    is_recent = is_recent_match(match, ctx["now"], window) if (window and window > 0) else True
+
+    if SILENT_BOOTSTRAP or not is_recent:
         day_states[key] = "announced"
         return False
     try:
         publish(ctx["webhook_url"], message(kind, ctx["league"], match, ctx["matches"], ctx["liquipedia"], ctx["catalog"], ctx["now"]))
+        # Small delay to avoid Discord rate limits when re-sending many messages
+        time.sleep(0.5)
     except RuntimeError as error:
         print(f"  ✗ Error publishing {label}: {error}", file=sys.stderr)
         return False
@@ -461,13 +468,29 @@ def main() -> int:
                 processed += 1
                 continue
 
-            published += announce(ctx, day_states, f"day:{day}", "tournament_day", match, f"Day {day} announcement", DAY_EVENT_SECONDS)
-            published += announce(ctx, day_states, match_id, "game_finished", match, f"Game finished: {radiant} vs {dire} (Match ID: {match_id})", RECENT_EVENT_SECONDS)
+            # Check if this match was already announced in this day's state
+            if match_id not in day_states:
+                # Only announce Day X once per day
+                if f"day:{day}" not in day_states:
+                    published += announce(ctx, day_states, f"day:{day}", "tournament_day", match, f"Day {day} announcement", DAY_EVENT_SECONDS)
+                
+                published += announce(ctx, day_states, match_id, "game_finished", match, f"Game finished: {radiant} vs {dire} (Match ID: {match_id})", RECENT_EVENT_SECONDS)
 
-            left_wins, right_wins = score_up_to(match, matches)
-            if max(left_wins, right_wins) >= wins_required:
-                label = f"Series finished: {radiant} vs {dire} ({left_wins} — {right_wins})"
-                published += announce(ctx, day_states, f"done:{series_key(match)}", "series_finished", match, label, RECENT_EVENT_SECONDS)
+                left_wins, right_wins = score_up_to(match, matches)
+                if max(left_wins, right_wins) >= wins_required:
+                    series_state_key = f"done:{series_key(match)}"
+                    label = f"Series finished: {radiant} vs {dire} ({left_wins} — {right_wins})"
+                    published += announce(ctx, day_states, series_state_key, "series_finished", match, label, RECENT_EVENT_SECONDS)
+            else:
+                # If game was announced, ensure we still announce Day X if it was somehow skipped
+                if f"day:{day}" not in day_states:
+                    published += announce(ctx, day_states, f"day:{day}", "tournament_day", match, f"Day {day} announcement", DAY_EVENT_SECONDS)
+
+                # Still need to record that we've seen this series finish if it was already announced
+                left_wins, right_wins = score_up_to(match, matches)
+                if max(left_wins, right_wins) >= wins_required:
+                    day_states[f"done:{series_key(match)}"] = "announced"
+
             processed += 1
 
         # The results table closes the day once every game of that day has a result.

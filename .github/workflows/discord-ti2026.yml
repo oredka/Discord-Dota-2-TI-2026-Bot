@@ -11,12 +11,6 @@ on:
     # Every 10 minutes (broad coverage)
     - cron: "*/10 * 13-24 8 *"
   workflow_dispatch:
-    inputs:
-      silent_bootstrap:
-        description: 'Only sync the state files, without posting anything to Discord'
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -35,7 +29,6 @@ jobs:
       SERIES_BEST_OF: ${{ vars.SERIES_BEST_OF || '3' }}
       LIQUIPEDIA_USER_AGENT: ${{ vars.LIQUIPEDIA_USER_AGENT || 'TI2026DiscordBot/1.0 (GitHub Actions)' }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      SILENT_BOOTSTRAP: ${{ inputs.silent_bootstrap && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
