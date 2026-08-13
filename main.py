@@ -164,39 +164,18 @@ def series_key(match: dict) -> str:
     return f"pair:{ids[0]}:{ids[1]}"
 
 
+TI_START_TIMESTAMP = 1786633200  # Aug 13 15:00:00 UTC (Day 1 Start)
+
+
 def tournament_day(match: dict) -> int:
     """Calculate which tournament day this match is on (1-indexed)."""
     start_time = match.get("start_time") or 0
     if start_time == 0:
-        return 0
+        return 1
     
-    # TI 2026 starts on Aug 13. We use a fixed reference point for Day 1.
-    # We'll use 2026-08-13 12:00:00 UTC as the base for Day 1 to ensure 
-    # that any match on that calendar day (PDT) falls into Day 1.
-    # 2026-08-13 00:00:00 UTC is 1786579200.
-    # Let's use 12:00 UTC as a safer middle point for the first day.
-    base_timestamp = 1786579200
-    
-    # We shift both timestamps to Seattle time (PDT, UTC-7)
-    # Day 1 in Seattle: from 1786579200 + 7h to 1786579200 + 7h + 24h? No.
-    # Seattle Day 1 (Aug 13) starts at 1786579200 + 7*3600 = 1786604400 UTC? No.
-    # Aug 13 00:00 PDT is Aug 13 07:00 UTC.
-    # 1786579200 is Aug 13 00:00 UTC.
-    # So Aug 13 00:00 PDT is 1786579200 + 7*3600 = 1786604400.
-    
-    # Let's simplify: any match between 1786579200 (Aug 13 00:00 UTC) 
-    # and 1786665600 (Aug 14 00:00 UTC) is Aug 13 UTC.
-    # TI usually starts at 10:00 AM local time.
-    # If we want to stay on "Day 1" for the whole first broadcast session:
-    # We define Day 1 start as Aug 13 00:00 UTC.
-    # And we use a long "day" (e.g. 30 hours) or just UTC-10 shift.
-    
-    # Using UTC-14 ensures that even late matches stay in the same "broadcast day".
-    ti_time = start_time - (14 * 3600)
-    ti_base = base_timestamp - (14 * 3600)
-    
-    day_diff = (ti_time // 86400) - (ti_base // 86400)
-    return max(1, day_diff + 1)
+    # Each tournament day is a 24-hour window starting from Aug 13 15:00 UTC
+    day = (start_time - TI_START_TIMESTAMP) // 86400 + 1
+    return max(1, int(day))
 
 
 def games_in_series(match: dict, matches: list[dict]) -> list[dict]:
