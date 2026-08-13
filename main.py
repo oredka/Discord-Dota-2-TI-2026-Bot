@@ -207,9 +207,17 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
     if kind == "live":
         return f"🔴 **МАТЧ РОЗПОЧАВСЯ**\n{radiant_label} 🆚 {dire_label}\nГра {game_number(match, matches)}"
     if kind == "game_finished":
-        return f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{radiant_label} {first} — {second} {dire_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
-    winner = radiant if first > second else dire
-    return f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{radiant_label} {first} — {second} {dire_label}\n🥇 Переможець: {team_label(winner, catalog)}"
+        # First check if the series just finished with this game
+        first, second = score(match, matches)
+        wins_required = SERIES_BEST_OF // 2 + 1
+        if max(first, second) >= wins_required:
+            # If series is finished, we usually show series_finished instead
+            # but main loop calls both. To avoid confusion, game_finished can stay simple.
+            pass
+        return f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{radiant_label} {1 if match.get('radiant_win') else 0} — {0 if match.get('radiant_win') else 1} {dire_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
+    
+    winner_name = radiant if first > second else dire
+    return f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{radiant_label} {first} — {second} {dire_label}\n🥇 Переможець: {team_label(winner_name, catalog)}"
 
 
 def load_states() -> dict[str, object]:
@@ -255,12 +263,9 @@ def main() -> int:
     
     print(f"Processing {len(matches)} matches with BO{SERIES_BEST_OF} format (need {wins_required} wins to clinch)...")
 
-    # Track tournament days to announce each day once
-    announced_days = set()
-    for match in matches:
-        day = tournament_day(match)
-        if day > 0:
-            announced_days.add(day)
+    # Track tournament days and series to announce each once per run
+    announced_days_in_run = set()
+    announced_series_in_run = set()
     
     for match in matches:
         match_id = str(match["match_id"])
@@ -273,16 +278,15 @@ def main() -> int:
         # Only announce if the day has already started (match is live or finished)
         if day > 0 and current != "scheduled":
             day_state_key = f"day:{day}"
-            if new_states.get(day_state_key) != "announced":
-                # Only announce if we are not in historical spam mode (or if user wants it)
-                # For TI 2026 start, we allow announcing the current day even on first run
-                # if the match is recent.
+            if new_states.get(day_state_key) != "announced" and day not in announced_days_in_run:
+                # Only announce if we are not in historical spam mode
                 is_recent = (now - (match.get("start_time") or 0)) < 3600 * 24 
                 if previous is not None or is_recent:
                     try:
                         publish(webhook_url, message("tournament_day", league, match, matches, liquipedia, catalog))
                         published += 1
                         print(f"  ✓ Day {day} announcement")
+                        announced_days_in_run.add(day)
                     except RuntimeError as error:
                         print(f"  ✗ Error announcing day {day}: {error}", file=sys.stderr)
                 new_states[day_state_key] = "announced"
@@ -306,17 +310,20 @@ def main() -> int:
                         print(f"  ✓ Game finished: {radiant} vs {dire} (Match ID: {match_id})")
                     new_states[match_id] = "finished"
 
+                # Check series status
                 first, second = score(match, matches)
                 series_state_key = f"done:{series_key(match)}"
-                if max(first, second) >= wins_required:
-                    # Announce series finish if it just happened or if it's recent
-                    is_recent = (now - (match.get("start_time") or 0)) < 3600 * 8 # 8 hours for series
-                    if states.get(series_state_key) != "finished":
+                
+                # Check if this series was already announced as finished in state or this run
+                if new_states.get(series_state_key) != "finished" and series_state_key not in announced_series_in_run:
+                    if max(first, second) >= wins_required:
+                        is_recent = (now - (match.get("start_time") or 0)) < 3600 * 8 # 8 hours for series
                         if previous is not None or is_recent:
                             publish(webhook_url, message("series_finished", league, match, matches, liquipedia, catalog))
                             published += 1
                             winner = radiant if first > second else dire
                             print(f"  ✓ Series finished: {winner} wins {first} — {second} (Key: {series_state_key})")
+                            announced_series_in_run.add(series_state_key)
                         new_states[series_state_key] = "finished"
         except RuntimeError as error:
             print(f"  ✗ Error processing {match_id} ({radiant} vs {dire}): {error}", file=sys.stderr)
