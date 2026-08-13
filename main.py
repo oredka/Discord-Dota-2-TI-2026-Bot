@@ -191,9 +191,9 @@ def tournament_day(match: dict) -> int:
     # We define Day 1 start as Aug 13 00:00 UTC.
     # And we use a long "day" (e.g. 30 hours) or just UTC-10 shift.
     
-    # Using UTC-12 ensures that even late matches stay in the same "broadcast day".
-    ti_time = start_time - (10 * 3600)
-    ti_base = base_timestamp - (10 * 3600)
+    # Using UTC-14 ensures that even late matches stay in the same "broadcast day".
+    ti_time = start_time - (14 * 3600)
+    ti_base = base_timestamp - (14 * 3600)
     
     day_diff = (ti_time // 86400) - (ti_base // 86400)
     return max(1, day_diff + 1)
@@ -389,9 +389,13 @@ def main() -> int:
                     # Announce if it just finished, or if it's the first time we see it and it's recent
                     is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
                     if previous is not None or is_recent:
-                        publish(webhook_url, message("game_finished", league, match, matches, liquipedia, catalog))
-                        published += 1
-                        print(f"  ✓ Game finished: {radiant} vs {dire} (Match ID: {match_id})")
+                        # Skip "game finished" message if this game clinches the entire series
+                        if not is_series_clinching:
+                            publish(webhook_url, message("game_finished", league, match, matches, liquipedia, catalog))
+                            published += 1
+                            print(f"  ✓ Game finished: {radiant} vs {dire} (Match ID: {match_id})")
+                        else:
+                            print(f"  - Skipping game message for {match_id} (series clincher)")
                     new_states[match_id] = "finished"
 
                 # Check if this series was already announced as finished in state or this run
