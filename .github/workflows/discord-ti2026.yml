@@ -1,13 +1,16 @@
 name: The International 2026 Discord updates
 
 on:
-  # Run during tournament in Shanghai (Aug 13-23, 2026)
-  # Shanghai is UTC+8, matches 10:00-22:00+ Shanghai = 02:00-14:00+ UTC
-  # Starting 1 hour early (01:00 UTC) in case matches begin earlier
-  # With 70-min games, may extend to ~15:30 UTC
+  push:
+    branches: [ main ]
+    paths:
+      - 'main.py'
+      - 'team_metadata.json'
+      - '.github/workflows/discord-ti2026.yml'
   schedule:
-    # Every 5 minutes during tournament hours (01:00-16:00 UTC)
-    - cron: "*/5 1-15 13-23 8 *"
+    # Every 5 minutes during tournament (Aug 13-24 UTC)
+    # We use a broad hour range 0-23 to ensure coverage across all timezones and potential delays
+    - cron: "*/5 * 13-24 8 *"
   workflow_dispatch:
 
 permissions:
