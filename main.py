@@ -105,11 +105,14 @@ def fetch_matches(league_id: int) -> tuple[dict, list[dict]]:
         m["radiant_name"] = team_names.get(m.get("radiant_team_id"), "Radiant")
         m["dire_name"] = team_names.get(m.get("dire_team_id"), "Dire")
     
+    # 4. Filter matches that actually belong to the league (sometimes API returns more)
+    matches = [m for m in matches if m.get("leagueid") == league_id]
+    
     league = {"displayName": "The International 2026", "id": league_id}
-    # Sort strictly: first by tournament day, then by series_id, then by start_time, then by match_id
+    # Sort strictly: first by start_time, then by series_id, then by match_id
     sorted_matches = sorted(
         matches, 
-        key=lambda x: (tournament_day(x), x.get("series_id") or 0, x.get("start_time") or 0, x.get("match_id") or 0)
+        key=lambda x: (x.get("start_time") or 0, x.get("series_id") or 0, x.get("match_id") or 0)
     )
     return league, sorted_matches
 
@@ -154,8 +157,11 @@ def match_state(match: dict, now: int) -> str:
 def series_key(match: dict) -> str:
     if match.get("series_id"):
         return f"series:{match['series_id']}"
-    team_names = "|".join(sorted(teams(match)))
-    return f"pair:{team_names}:{(match.get('start_time') or 0) // 86400}"
+    # Fallback to team IDs if series_id is missing
+    r_id = match.get("radiant_team_id") or 0
+    d_id = match.get("dire_team_id") or 0
+    ids = sorted([r_id, d_id])
+    return f"pair:{ids[0]}:{ids[1]}"
 
 
 def tournament_day(match: dict) -> int:
@@ -163,7 +169,10 @@ def tournament_day(match: dict) -> int:
     start_time = match.get("start_time") or 0
     if start_time == 0:
         return 0
-    day_diff = (start_time // 86400) - (int(TI_START_DATE.timestamp()) // 86400)
+    # Use EEST (UTC+3) or similar for TI to avoid day shift in middle of games
+    # But for simplicity, let's just shift UTC by -5 hours (Seattle time)
+    seattle_time = start_time - (5 * 3600)
+    day_diff = (seattle_time // 86400) - (int(TI_START_DATE.timestamp() - (5 * 3600)) // 86400)
     return max(1, day_diff + 1)
 
 
@@ -195,14 +204,26 @@ def score(match: dict, matches: list[dict]) -> tuple[int, int]:
 
 def score_up_to(match: dict, matches: list[dict]) -> tuple[int, int]:
     series_games = games_in_series(match, matches)
+    if not series_games:
+        return 0, 0
+    
     first_game = series_games[0]
     left_team_id = first_game.get("radiant_team_id")
     right_team_id = first_game.get("dire_team_id")
 
     try:
-        current_game_index = series_games.index(match)
-    except ValueError:
+        current_game_index = -1
+        # Use match_id for exact identification in the list
+        for i, g in enumerate(series_games):
+            if str(g.get("match_id")) == str(match.get("match_id")):
+                current_game_index = i
+                break
+        
+        if current_game_index == -1:
+            return 0, 0
+    except Exception:
         return 0, 0
+        
     games_to_count = series_games[:current_game_index + 1]
     
     left_wins = right_wins = 0
@@ -221,7 +242,11 @@ def score_up_to(match: dict, matches: list[dict]) -> tuple[int, int]:
 
 
 def game_number(match: dict, matches: list[dict]) -> int:
-    return games_in_series(match, matches).index(match) + 1
+    series_games = games_in_series(match, matches)
+    for i, g in enumerate(series_games):
+        if str(g.get("match_id")) == str(match.get("match_id")):
+            return i + 1
+    return 1
 
 
 def format_duration(seconds: int | None) -> str:
