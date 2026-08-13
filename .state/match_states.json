@@ -1,6 +1,6 @@
 {
   "opendota_cache": {
-    "fetched_at": 1786620412.0720637,
+    "fetched_at": 1786621132.6446097,
     "league": {
       "displayName": "The International 2026",
       "id": 19719
@@ -427,7 +427,12 @@
   "8943235603": "finished",
   "8943278347": "finished",
   "liquipedia": {
-    "fetched_at": 1786620411.8010652,
+    "fetched_at": 1786621132.2842884,
     "title": "The International 2026"
-  }
+  },
+  "8943182700": "finished",
+  "8943200897": "finished",
+  "8943202720": "finished",
+  "8943244303": "finished",
+  "8943267925": "finished"
 }
