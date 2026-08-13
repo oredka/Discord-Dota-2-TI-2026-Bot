@@ -16,8 +16,8 @@ permissions:
 jobs:
   publish-update:
     runs-on: ubuntu-latest
-    # Do not create another commit when the state-only commit starts this workflow.
-    if: github.actor != 'github-actions[bot]'
+    # We removed the 'if: github.actor != ...' condition to ensure scheduled runs always execute.
+    # Since we only trigger on schedule and dispatch, there is no risk of a commit loop.
     env:
       SERIES_BEST_OF: ${{ vars.SERIES_BEST_OF || '3' }}
       LIQUIPEDIA_USER_AGENT: ${{ vars.LIQUIPEDIA_USER_AGENT || 'TI2026DiscordBot/1.0 (GitHub Actions)' }}
