@@ -474,11 +474,18 @@ def main() -> int:
 
             # Check if this match was already announced in this day's state
             if match_id not in day_states:
-                if announce(ctx, day_states, match_id, "game_finished", match, f"Game finished: {radiant} vs {dire} (Match ID: {match_id})"):
-                    published += 1
-
                 left_wins, right_wins = score_up_to(match, matches)
-                if max(left_wins, right_wins) >= wins_required:
+                is_series_end = max(left_wins, right_wins) >= wins_required
+
+                if not is_series_end:
+                    if announce(ctx, day_states, match_id, "game_finished", match, f"Game finished: {radiant} vs {dire} (Match ID: {match_id})"):
+                        published += 1
+                else:
+                    # Mark the game as announced even if we don't send a separate message for it,
+                    # to avoid it being picked up as "new" in future checks.
+                    day_states[match_id] = "announced"
+
+                if is_series_end:
                     series_state_key = f"done:{series_key(match)}"
                     label = f"Series finished: {radiant} vs {dire} ({left_wins} — {right_wins})"
                     if announce(ctx, day_states, series_state_key, "series_finished", match, label):
