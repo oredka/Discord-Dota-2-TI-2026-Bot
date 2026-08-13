@@ -325,23 +325,28 @@ def main() -> int:
                     print(f"  ✓ Match started: {radiant} vs {dire}")
                 new_states[match_id] = "live"
             elif current == "finished":
+                # Check if this specific match completed the series
+                first_so_far, second_up_to = score_up_to(match, matches)
+                series_state_key = f"done:{series_key(match)}"
+                is_series_clinching = max(first_so_far, second_up_to) >= wins_required
+
                 if previous != "finished":
                     # Announce if it just finished, or if it's the first time we see it and it's recent
                     is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
                     if previous is not None or is_recent:
-                        publish(webhook_url, message("game_finished", league, match, matches, liquipedia, catalog))
-                        published += 1
-                        print(f"  ✓ Game finished: {radiant} vs {dire} (Match ID: {match_id})")
+                        # Skip "game finished" message if this game clinches the entire series
+                        if not is_series_clinching:
+                            publish(webhook_url, message("game_finished", league, match, matches, liquipedia, catalog))
+                            published += 1
+                            print(f"  ✓ Game finished: {radiant} vs {dire} (Match ID: {match_id})")
+                        else:
+                            print(f"  - Skipping game message for {match_id} (series clincher)")
                     new_states[match_id] = "finished"
 
-                # Check if this specific match completed the series
-                first_so_far, second_up_to = score_up_to(match, matches)
-                series_state_key = f"done:{series_key(match)}"
-                
                 # Check if this series was already announced as finished in state or this run
                 if new_states.get(series_state_key) != "finished" and series_state_key not in announced_series_in_run:
                     # A series is finished if one team reaches enough wins
-                    if max(first_so_far, second_up_to) >= wins_required:
+                    if is_series_clinching:
                         is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
                         if previous is not None or is_recent:
                             publish(webhook_url, message("series_finished", league, match, matches, liquipedia, catalog))
