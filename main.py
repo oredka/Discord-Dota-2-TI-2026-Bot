@@ -191,9 +191,9 @@ def tournament_day(match: dict) -> int:
     # We define Day 1 start as Aug 13 00:00 UTC.
     # And we use a long "day" (e.g. 30 hours) or just UTC-10 shift.
     
-    # Using UTC-10 ensures that 10:00 AM UTC (start of TI) is 00:00 AM "TI-time".
-    ti_time = start_time - (10 * 3600)
-    ti_base = base_timestamp - (10 * 3600)
+    # Using UTC-12 ensures that even late matches stay in the same "broadcast day".
+    ti_time = start_time - (12 * 3600)
+    ti_base = base_timestamp - (12 * 3600)
     
     day_diff = (ti_time // 86400) - (ti_base // 86400)
     return max(1, day_diff + 1)
