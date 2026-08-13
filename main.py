@@ -320,7 +320,14 @@ def format_start(unix_time: int | None) -> str:
     return f"<t:{unix_time}:t>"
 
 
-def message(kind: str, league: dict, match: dict, matches: list[dict], catalog: dict[str, dict[str, str]], now: int) -> str:
+def get_series_best_of(match: dict, day: int) -> int:
+    """TI 2026: Grand Final (Day 11) is Bo5, others are Bo3."""
+    if day == 11:
+        return 5
+    return 3
+
+
+def message(kind: str, league: dict, match: dict, matches: list[dict], catalog: dict[str, dict[str, str]], now: int, is_grand_final: bool = False) -> str:
     series_games = games_in_series(match, matches)
     first_game = series_games[0]
     left_name = (first_game.get("radiant_name") or "Radiant").strip()
@@ -348,7 +355,12 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], catalog: 
     
     left_total, right_total = score(match, matches)
     winner_name = left_name if left_total > right_total else right_name
-    res = f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{left_label} {left_total} — {right_total} {right_label}\n🥇 Переможець: {team_label(winner_name, catalog)}"
+    
+    if is_grand_final:
+        res = f"🏆🥇 **ПЕРЕМОЖЕЦЬ THE INTERNATIONAL 2026**\n{team_label(winner_name, catalog)} ({left_total} — {right_total})"
+    else:
+        res = f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n{left_label} {left_total} — {right_total} {right_label}\n🥇 Переможець: {team_label(winner_name, catalog)}"
+    
     return res + "\n\u200b\n"
 
 
@@ -384,7 +396,7 @@ def publish(webhook_url: str, text: str) -> None:
     )
 
 
-def announce(ctx: dict, day_states: dict[str, object], key: str, kind: str, match: dict, label: str) -> bool:
+def announce(ctx: dict, day_states: dict[str, object], key: str, kind: str, match: dict, label: str, is_grand_final: bool = False) -> bool:
     """Publish one event at most once, ever. Returns True when a Discord message was sent.
 
     A key already present in the day state was handled by an earlier run, so a repeated Action run
@@ -397,7 +409,7 @@ def announce(ctx: dict, day_states: dict[str, object], key: str, kind: str, matc
         day_states[key] = "announced"
         return False
     try:
-        publish(ctx["webhook_url"], message(kind, ctx["league"], match, ctx["matches"], ctx["catalog"], ctx["now"]))
+        publish(ctx["webhook_url"], message(kind, ctx["league"], match, ctx["matches"], ctx["catalog"], ctx["now"], is_grand_final))
         # Small delay to avoid Discord rate limits when re-sending many messages
         time.sleep(0.5)
         day_states[key] = "announced"
@@ -474,10 +486,16 @@ def main() -> int:
                 processed += 1
                 continue
 
+            # Determine best-of format for this match
+            best_of = get_series_best_of(match, day)
+            wins_required = best_of // 2 + 1
+            
+            # Grand Final is the last match of the last day
+            is_grand_final = (day == 11 and match == day_matches[-1])
+
             # Check if this match was already announced in this day's state
             if match_id not in day_states:
                 left_wins, right_wins = score_up_to(match, matches)
-                wins_required = SERIES_BEST_OF // 2 + 1
                 is_series_end = left_wins >= wins_required or right_wins >= wins_required
 
                 if not is_series_end:
@@ -491,18 +509,17 @@ def main() -> int:
                 if is_series_end:
                     series_state_key = f"done:{series_key(match)}"
                     label = f"Series finished: {radiant} vs {dire} ({left_wins} — {right_wins})"
-                    if announce(ctx, day_states, series_state_key, "series_finished", match, label):
+                    if announce(ctx, day_states, series_state_key, "series_finished", match, label, is_grand_final):
                         published += 1
             else:
                 # IMPORTANT: If the game was already announced, we MUST still check if the series 
                 # completion needs to be announced. This handles cases where a game was posted 
                 # but the subsequent series message was missed in a previous run.
                 left_wins, right_wins = score_up_to(match, matches)
-                wins_required = SERIES_BEST_OF // 2 + 1
                 if left_wins >= wins_required or right_wins >= wins_required:
                     series_state_key = f"done:{series_key(match)}"
                     label = f"Series finished (delayed): {radiant} vs {dire} ({left_wins} — {right_wins})"
-                    if announce(ctx, day_states, series_state_key, "series_finished", match, label):
+                    if announce(ctx, day_states, series_state_key, "series_finished", match, label, is_grand_final):
                         published += 1
 
             processed += 1
