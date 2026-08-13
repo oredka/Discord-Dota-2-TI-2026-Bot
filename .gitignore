@@ -6,4 +6,6 @@ __pycache__/
 *$py.class
 .env
 .state/
+!states/
+!states/*.json
 *.log

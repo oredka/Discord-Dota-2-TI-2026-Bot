@@ -408,7 +408,7 @@ def main() -> int:
     # Check if this is the first run ever (no state file at all)
     is_first_run = not states and not any(STATE_FILE.with_name(f"match_states_day{d}.json").exists() for d in day_to_matches)
     if is_first_run:
-        print("First run detected. Initializing state without sending messages for existing matches.")
+        print("First run detected. Initializing state without sending messages for existing matches (except final daily tables).")
 
     published = 0
     wins_required = SERIES_BEST_OF // 2 + 1
@@ -498,7 +498,9 @@ def main() -> int:
                 is_recent = (now - (last_match.get("start_time") or 0)) < 3600 * 48
                 any_known = any(str(m["match_id"]) in day_states for m in day_matches)
                 
-                if not is_first_run and (any_known or is_recent):
+                # If the day is finished, we want to show the table even on the first run
+                # but ONLY if it wasn't already marked as announced in the states we just loaded/updated
+                if day_finished_key not in day_states:
                     try:
                         publish(webhook_url, message("day_finished", league, last_match, matches, liquipedia, catalog, now))
                         published += 1
@@ -513,6 +515,10 @@ def main() -> int:
 
     states["liquipedia"] = liquipedia
     save_states(states)
+    
+    # Ensure a placeholder file exists in states/ so git tracks the directory if it's empty
+    # though save_states already creates files.
+    
     print(f"Processed {processed} match(es), published {published} Discord update(s).")
     return 0
 
