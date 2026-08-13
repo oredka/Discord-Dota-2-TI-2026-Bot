@@ -290,7 +290,7 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], liquipedi
         team_stats = {}  # name -> {"wins": 0, "losses": 0}
         
         # Consider all matches up to the end of this day
-        relevant_matches = [m for m in matches if tournament_day(m) <= day and match_state(m, now) == "finished"]
+        relevant_matches = [m for m in matches if tournament_day(m) <= day and m.get("radiant_win") is not None]
         
         for m in relevant_matches:
             r_name = m.get("radiant_name") or "Radiant"
@@ -406,7 +406,11 @@ def main() -> int:
             day_to_matches[d].append(match)
     
     # Check if this is the first run ever (no state file at all)
-    is_first_run = not states and not any(STATE_FILE.with_name(f"match_states_day{d}.json").exists() for d in day_to_matches)
+    is_first_run = not states and not any(
+        STATE_FILE.with_name(f"match_states_day{d}.json").exists() and 
+        STATE_FILE.with_name(f"match_states_day{d}.json").stat().st_size > 5 
+        for d in day_to_matches
+    )
     if is_first_run:
         print("First run detected. Initializing state without sending messages for existing matches (except final daily tables).")
 
@@ -423,6 +427,9 @@ def main() -> int:
 
     for day in sorted(day_to_matches.keys()):
         day_matches = day_to_matches[day]
+        # Sort matches within the day strictly chronologically
+        day_matches = sorted(day_matches, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))
+        
         day_states = load_states(day)
         new_day_states = dict(day_states)
         
@@ -463,15 +470,17 @@ def main() -> int:
                     series_state_key = f"done:{series_key(match)}"
                     is_series_clinching = max(first_so_far, second_up_to) >= wins_required
 
+                    # 1. Announce Game Finished if not already done
                     if previous != "finished":
                         is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
                         if not is_first_run and (previous is not None or is_recent):
-                            if not is_series_clinching:
-                                publish(webhook_url, message("game_finished", league, match, matches, liquipedia, catalog, now))
-                                published += 1
-                                print(f"  ✓ Game finished: {radiant} vs {dire} (Match ID: {match_id})")
+                            # Even if clinching, we still announce the last game
+                            publish(webhook_url, message("game_finished", league, match, matches, liquipedia, catalog, now))
+                            published += 1
+                            print(f"  ✓ Game finished: {radiant} vs {dire} (Match ID: {match_id})")
                         new_day_states[match_id] = "finished"
 
+                    # 2. Announce Series Finished if this match clinches it
                     if series_state_key not in announced_in_day:
                         if is_series_clinching:
                             is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
