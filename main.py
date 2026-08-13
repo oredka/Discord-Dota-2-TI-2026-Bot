@@ -330,9 +330,16 @@ def main() -> int:
     print(f"Processing {len(matches)} matches with BO{SERIES_BEST_OF} format (need {wins_required} wins to clinch)...")
 
     # Track tournament days and series to announce each once per run
+    # Use a dictionary to track which match triggered the day announcement to avoid duplicates
     announced_days_in_run = set()
     announced_series_in_run = set()
     
+    # Pre-announced days from saved state
+    for k, v in states.items():
+        if k.startswith("day:") and v == "announced":
+            day_num = int(k.split(":")[1])
+            announced_days_in_run.add(day_num)
+
     for match in matches:
         match_id = str(match["match_id"])
         current = match_state(match, now)
@@ -341,10 +348,11 @@ def main() -> int:
         day = tournament_day(match)
         
         # Announce tournament day once per day
-        # Only announce if the day has already started (match is live or finished)
+        # Only announce if the day has already started (match is finished)
         if day > 0 and current != "scheduled":
             day_state_key = f"day:{day}"
-            if new_states.get(day_state_key) != "announced" and day not in announced_days_in_run:
+            # Check both saved state and current run tracking
+            if day not in announced_days_in_run:
                 # Only announce if we are not in historical spam mode
                 is_recent = (now - (match.get("start_time") or 0)) < 3600 * 48 
                 if previous is not None or is_recent:
@@ -353,9 +361,13 @@ def main() -> int:
                         published += 1
                         print(f"  ✓ Day {day} announcement")
                         announced_days_in_run.add(day)
+                        new_states[day_state_key] = "announced"
                     except RuntimeError as error:
                         print(f"  ✗ Error announcing day {day}: {error}", file=sys.stderr)
-                new_states[day_state_key] = "announced"
+                else:
+                    # Even if not recent, mark as announced to avoid future checks
+                    new_states[day_state_key] = "announced"
+                    announced_days_in_run.add(day)
         
         try:
             if current == "finished":
