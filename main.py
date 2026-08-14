@@ -524,10 +524,23 @@ def main() -> int:
             processed += 1
 
         # The results table closes the day once every game of that day has a result.
-        if all(match_state(m, now) == "finished" for m in day_matches):
+        # Added a safety buffer: only close the day if at least 2 hours have passed since the last match ended,
+        # or if it's already the next day, to account for API delays or late-added matches.
+        if day_matches and all(match_state(m, now) == "finished" for m in day_matches):
             last_match = max(day_matches, key=match_end_time)
-            if announce(ctx, day_states, f"day:{day}:finished", "day_finished", last_match, f"Day {day} finished announcement"):
-                published += 1
+            last_match_end = match_end_time(last_match)
+            
+            # 2 hours safety buffer (7200 seconds)
+            is_time_safe = (now > last_match_end + 7200)
+            
+            # Or if the current time is already well into the next day (04:00 UTC of next day)
+            # This handles long days where matches might go late.
+            next_day_start = int((TI_START_DATE + timedelta(days=day)).timestamp())
+            is_next_day = (now > next_day_start + 14400) # 4 hours into next day
+
+            if is_time_safe or is_next_day:
+                if announce(ctx, day_states, f"day:{day}:finished", "day_finished", last_match, f"Day {day} finished announcement"):
+                    published += 1
 
         save_states(day_states, day)
 
