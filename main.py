@@ -100,7 +100,7 @@ def fetch_matches(league_id: int) -> tuple[dict, list[dict]]:
     
     # 2. Fetch teams to map names
     teams_data = get_json(f"{OPENDOTA_API_ENDPOINT}/leagues/{league_id}/teams", {"User-Agent": "ti2026-discord-webhook/1.0"})
-    team_names = {t["team_id"]: t["name"] for t in teams_data}
+    team_names = {t["team_id"]: t["name"].strip() for t in teams_data if t.get("name")}
     
     # 3. Enrich matches with team names
     for m in matches:
@@ -127,7 +127,7 @@ def load_team_catalog() -> dict[str, dict[str, str]]:
     if not TEAM_CATALOG_FILE.exists():
         return {}
     try:
-        data = json.loads(TEAM_CATALOG_FILE.read_text(encoding="utf-8"))
+        data = json.loads(TEAM_CATALOG_FILE.read_text(encoding="utf-8-sig"))
         return {name.casefold(): item for name, item in data.items() if isinstance(item, dict)}
     except json.JSONDecodeError:
         print("Warning: team_metadata.json is invalid; using team names only.", file=sys.stderr)
@@ -194,6 +194,16 @@ def tournament_day(match: dict) -> int:
     day = delta.days + 1
     # If the match is before the official start day, it's day 1 (pre-tournament or early games)
     return max(1, day)
+
+
+def current_tournament_day(now: int) -> int:
+    """Calculate the current tournament day (1-indexed) based on UTC time."""
+    now_dt = datetime.fromtimestamp(now, UTC)
+    current_date_utc = datetime(now_dt.year, now_dt.month, now_dt.day, tzinfo=UTC)
+    delta = (current_date_utc - TI_START_DATE).days
+    if delta < 0:
+        return 0
+    return delta + 1
 
 
 def games_in_series(match: dict, matches: list[dict]) -> list[dict]:
@@ -327,7 +337,37 @@ def get_series_best_of(match: dict, day_matches: list[dict], day: int) -> int:
     return 3
 
 
-def message(kind: str, league: dict, match: dict, matches: list[dict], catalog: dict[str, dict[str, str]], now: int, is_grand_final: bool = False) -> str:
+def message(
+    kind: str,
+    league: dict,
+    match: dict | None,
+    matches: list[dict],
+    catalog: dict[str, dict[str, str]],
+    now: int,
+    is_grand_final: bool = False,
+    day: int | None = None,
+) -> str:
+    if kind == "tournament_day":
+        if day is None and match:
+            day = tournament_day(match)
+        res = f"📅 **ДЕНЬ {day} THE INTERNATIONAL 2026**\n{MAINCAST_DOTA2_URL}"
+        return res + "\n\u200b\n"
+    if kind == "tournament_day_no_matches":
+        if day is None and match:
+            day = tournament_day(match)
+        res = f"📅 **ДЕНЬ {day} THE INTERNATIONAL 2026**\nСьогодні ігор не заплановано"
+        return res + "\n\u200b\n"
+    if kind == "day_finished":
+        if day is None and match:
+            day = tournament_day(match)
+        # Simple text format: 1. 🇷🇺 Team (4-2), ordered by current place in the tournament
+        table = "".join(
+            f"{place}. {team_label(name, catalog)} ({wins}-{losses})\n"
+            for place, name, wins, losses in standings(matches, day or 0)
+        )
+        res = f"🏆 **ДЕНЬ {day} THE INTERNATIONAL 2026 ЗАВЕРШИВСЯ**\n\n{table}"
+        return res + "\n\u200b\n"
+
     series_games = games_in_series(match, matches)
     first_game = series_games[0]
     left_name = (first_game.get("radiant_name") or "Radiant").strip()
@@ -335,19 +375,6 @@ def message(kind: str, league: dict, match: dict, matches: list[dict], catalog: 
     left_label = team_label(left_name, catalog)
     right_label = team_label(right_name, catalog)
 
-    if kind == "tournament_day":
-        day = tournament_day(match)
-        res = f"📅 **ДЕНЬ {day} THE INTERNATIONAL 2026**\n{MAINCAST_DOTA2_URL}"
-        return res + "\n\u200b\n"
-    if kind == "day_finished":
-        day = tournament_day(match)
-        # Simple text format: 1. 🇷🇺 Team (4-2), ordered by current place in the tournament
-        table = "".join(
-            f"{place}. {team_label(name, catalog)} ({wins}-{losses})\n"
-            for place, name, wins, losses in standings(matches, day)
-        )
-        res = f"🏆 **ДЕНЬ {day} THE INTERNATIONAL 2026 ЗАВЕРШИВСЯ**\n\n{table}"
-        return res + "\n\u200b\n"
     if kind == "game_finished":
         left_score, right_score = score_up_to(match, matches)
         res = f"🎮 **ГРА {game_number(match, matches)} ЗАВЕРШИЛАСЯ**\n{left_label} {left_score} — {right_score} {right_label}\n⏱ Тривалість: {format_duration(match.get('duration'))}"
@@ -375,7 +402,7 @@ def load_states(day: int | None = None) -> dict[str, object]:
     if not file.exists():
         return {}
     try:
-        return json.loads(file.read_text(encoding="utf-8"))
+        return json.loads(file.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError:
         return {}
 
@@ -399,7 +426,7 @@ def publish(webhook_url: str, text: str) -> None:
     )
 
 
-def announce(ctx: dict, day_states: dict[str, object], key: str, kind: str, match: dict, label: str, is_grand_final: bool = False) -> bool:
+def announce(ctx: dict, day_states: dict[str, object], key: str, kind: str, match: dict | None, label: str, is_grand_final: bool = False, day: int | None = None) -> bool:
     """Publish one event at most once, ever. Returns True when a Discord message was sent.
 
     A key already present in the day state was handled by an earlier run, so a repeated Action run
@@ -412,7 +439,7 @@ def announce(ctx: dict, day_states: dict[str, object], key: str, kind: str, matc
         day_states[key] = "announced"
         return False
     try:
-        publish(ctx["webhook_url"], message(kind, ctx["league"], match, ctx["matches"], ctx["catalog"], ctx["now"], is_grand_final))
+        publish(ctx["webhook_url"], message(kind, ctx["league"], match, ctx["matches"], ctx["catalog"], ctx["now"], is_grand_final, day=day))
         # Small delay to avoid Discord rate limits when re-sending many messages
         time.sleep(0.5)
         day_states[key] = "announced"
@@ -456,13 +483,28 @@ def main() -> int:
     published = 0
     processed = 0
 
-    for day in sorted(day_to_matches.keys()):
-        day_matches = day_to_matches[day]
+    curr_day = current_tournament_day(now)
+    days_to_process = set(day_to_matches.keys())
+    if curr_day >= 1:
+        # Include all tournament days up to current day (up to 11)
+        for d in range(1, min(curr_day, 11) + 1):
+            days_to_process.add(d)
+
+    for day in sorted(days_to_process):
+        day_matches = day_to_matches.get(day, [])
         # Sort matches within the day strictly chronologically
         day_matches = sorted(day_matches, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))
         
         # Every announcement is keyed in this dict, so a repeated run publishes nothing new.
         day_states = load_states(day)
+
+        if not day_matches:
+            # On rest days (no matches scheduled/played), announce the day if it hasn't been announced yet
+            if day <= curr_day and f"day:{day}" not in day_states:
+                if announce(ctx, day_states, f"day:{day}", "tournament_day_no_matches", None, f"Day {day} announcement (no matches)", day=day):
+                    published += 1
+            save_states(day_states, day)
+            continue
 
         # Ensure Day X announcement is sent first if we are announcing anything from this day
         # and it hasn't been announced yet.
@@ -474,7 +516,7 @@ def main() -> int:
         if has_new_finished_matches and f"day:{day}" not in day_states:
             # Use the first match of the day to trigger the "Day started" message
             first_match = day_matches[0]
-            if announce(ctx, day_states, f"day:{day}", "tournament_day", first_match, f"Day {day} announcement"):
+            if announce(ctx, day_states, f"day:{day}", "tournament_day", first_match, f"Day {day} announcement", day=day):
                 published += 1
 
         for match in day_matches:
