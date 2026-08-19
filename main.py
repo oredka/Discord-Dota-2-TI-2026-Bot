@@ -7,6 +7,7 @@ import os
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -51,13 +52,26 @@ def post_json(url: str, payload: dict, headers: dict[str, str] | None = None) ->
         raise RuntimeError(f"Network error: {error}") from error
 
 
-def get_json(url: str, headers: dict[str, str]) -> dict:
-    try:
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        return response.json()
-    except (requests.exceptions.RequestException, json.JSONDecodeError) as error:
-        raise RuntimeError(f"Liquipedia request failed: {error}") from error
+def get_json(url: str, headers: dict[str, str], max_retries: int = 3, retry_delay: float = 2.0) -> dict:
+    last_error: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            if response.status_code in (429, 500, 502, 503, 504, 520, 521, 522, 524):
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+            response.raise_for_status()
+            return response.json()
+        except (requests.exceptions.RequestException, json.JSONDecodeError) as error:
+            last_error = error
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (attempt + 1))
+            else:
+                raise RuntimeError(f"Request to {url} failed: {error}") from error
+    if last_error:
+        raise RuntimeError(f"Request to {url} failed: {last_error}") from last_error
+    return {}
 
 
 def liquipedia_context(states: dict[str, object]) -> dict[str, object]:
@@ -88,10 +102,11 @@ def fetch_matches_cached(states: dict[str, object], league_id: int) -> tuple[dic
         print(f"Fetched {len(matches)} matches from OpenDota.")
         return league, matches
     except RuntimeError as error:
-        if isinstance(cached, dict):
-            print(f"Error: {error}; using stale OpenDota cache.", file=sys.stderr)
+        if isinstance(cached, dict) and cached.get("matches"):
+            print(f"Warning: {error}; using stale OpenDota cache.", file=sys.stderr)
             return cached.get("league", {}), cached.get("matches", [])
-        raise
+        print(f"Warning: could not fetch OpenDota matches: {error}", file=sys.stderr)
+        return {"displayName": "The International 2026", "id": league_id}, []
 
 
 def fetch_matches(league_id: int) -> tuple[dict, list[dict]]:
@@ -281,8 +296,8 @@ def game_number(match: dict, matches: list[dict]) -> int:
     return 1
 
 
-def eliminated_teams(matches: list[dict], up_to_day: int) -> dict[str, int]:
-    """Map of team names to the tournament day on which they were eliminated."""
+def eliminated_teams(matches: list[dict], up_to_day: int) -> dict[str, dict[str, object]]:
+    """Map of team names to elimination info: {'day': int, 'place': str}."""
     series_map: dict[str, list[dict]] = {}
     for m in matches:
         if tournament_day(m) > up_to_day:
@@ -295,7 +310,7 @@ def eliminated_teams(matches: list[dict], up_to_day: int) -> dict[str, int]:
     swiss_losses: dict[str, int] = {}
     swiss_wins: dict[str, int] = {}
     playoff_losses: dict[str, int] = {}
-    elimination_day: dict[str, int] = {}
+    elim_info: dict[str, dict[str, object]] = {}
 
     for sm in sorted_series:
         first = sm[0]
@@ -323,73 +338,307 @@ def eliminated_teams(matches: list[dict], up_to_day: int) -> dict[str, int]:
 
         if swiss_wins[loser] < 4:
             swiss_losses[loser] += 1
-            if swiss_losses[loser] >= 4 and loser not in elimination_day:
-                elimination_day[loser] = s_day
+            if swiss_losses[loser] >= 4 and loser not in elim_info:
+                # In Swiss: Day 3 elimination -> 14-16 місце; Day 4 elimination -> 11-13 місце
+                place_str = "14-16 місце" if s_day <= 3 else "11-13 місце"
+                elim_info[loser] = {"day": s_day, "place": place_str, "stage": "swiss"}
         else:
             playoff_losses[loser] += 1
-            if playoff_losses[loser] >= 2 and loser not in elimination_day:
-                elimination_day[loser] = s_day
+            if playoff_losses[loser] >= 2 and loser not in elim_info:
+                elim_count = len([t for t, info in elim_info.items() if info["stage"] == "playoffs"])
+                # Playoff eliminations order: 2 teams -> 9-10th, 2 teams -> 7-8th, 2 teams -> 5-6th, 1 -> 4th, 1 -> 3rd, 1 -> 2nd
+                if elim_count < 2:
+                    place_str = "9-10 місце"
+                elif elim_count < 4:
+                    place_str = "7-8 місце"
+                elif elim_count < 6:
+                    place_str = "5-6 місце"
+                elif elim_count == 6:
+                    place_str = "4 місце"
+                elif elim_count == 7:
+                    place_str = "3 місце"
+                else:
+                    place_str = "2 місце"
+                elim_info[loser] = {"day": s_day, "place": place_str, "stage": "playoffs"}
 
         if swiss_wins[winner] < 4:
             swiss_wins[winner] += 1
 
-    return elimination_day
+    return elim_info
 
 
-def standings(matches: list[dict], day: int) -> list[tuple[int, str, int, int, bool]]:
-    """Games won/lost per team up to the end of `day`, ordered by current place in the tournament.
+def standings(matches: list[dict], day: int) -> list[tuple[int, str, int, int, int, int, str | None]]:
+    """Series & games won/lost per team up to the end of `day`, ordered by current place in the tournament.
 
-    Active teams are ranked first by wins, then by fewest losses; equal records share a place.
+    Active teams are ranked first by series wins, then by game wins, fewest losses; equal records share a place.
     Eliminated teams are placed below active teams, ranked by stage/day eliminated and game record.
+    Returns: list of (display_place, team_name, series_wins, series_losses, game_wins, game_losses, elim_place_str_or_None)
     """
-    stats: dict[str, dict[str, int]] = {}
+    game_stats: dict[str, dict[str, int]] = {}
+    series_stats: dict[str, dict[str, int]] = {}
+
+    series_map: dict[str, list[dict]] = {}
     for match in matches:
         if tournament_day(match) > day:
             continue
         radiant, dire = teams(match)
-        # Ensure we use stripped names for matching with catalog and consistency
         radiant = radiant.strip()
         dire = dire.strip()
         
         known = [name for name in (radiant, dire) if name not in ("Radiant", "Dire")]
         for name in known:
-            stats.setdefault(name, {"wins": 0, "losses": 0})
+            game_stats.setdefault(name, {"wins": 0, "losses": 0})
+            series_stats.setdefault(name, {"wins": 0, "losses": 0})
+
         outcome = match.get("radiant_win")
-        if outcome is None or len(known) < 2:
-            continue
-        winner, loser = (radiant, dire) if outcome else (dire, radiant)
-        stats[winner]["wins"] += 1
-        stats[loser]["losses"] += 1
+        if outcome is not None and len(known) >= 2:
+            winner, loser = (radiant, dire) if outcome else (dire, radiant)
+            game_stats[winner]["wins"] += 1
+            game_stats[loser]["losses"] += 1
+
+        sk = series_key(match)
+        series_map.setdefault(sk, []).append(match)
+
+    # Compute series wins/losses
+    for sm in series_map.values():
+        first = sm[0]
+        r_name, d_name = teams(first)
+        r_name, d_name = r_name.strip(), d_name.strip()
+        r_id = first.get("radiant_team_id")
+        d_id = first.get("dire_team_id")
+        r_wins = sum(1 for gm in sm if (gm.get("radiant_win") and gm.get("radiant_team_id") == r_id) or (not gm.get("radiant_win") and gm.get("dire_team_id") == r_id))
+        d_wins = sum(1 for gm in sm if (gm.get("radiant_win") and gm.get("radiant_team_id") == d_id) or (not gm.get("radiant_win") and gm.get("dire_team_id") == d_id))
+
+        if r_wins > d_wins and (r_wins >= 2 or d_wins >= 2 or len(sm) == 1):
+            if r_name in series_stats and d_name in series_stats:
+                series_stats[r_name]["wins"] += 1
+                series_stats[d_name]["losses"] += 1
+        elif d_wins > r_wins and (r_wins >= 2 or d_wins >= 2 or len(sm) == 1):
+            if r_name in series_stats and d_name in series_stats:
+                series_stats[d_name]["wins"] += 1
+                series_stats[r_name]["losses"] += 1
 
     elim_map = eliminated_teams(matches, day)
 
-    active = [name for name in stats if name not in elim_map]
-    eliminated = [name for name in stats if name in elim_map]
+    active_ordered = sorted(
+        [name for name in game_stats if name not in elim_map],
+        key=lambda name: (
+            -series_stats[name]["wins"],
+            series_stats[name]["losses"],
+            -game_stats[name]["wins"],
+            game_stats[name]["losses"],
+            name.casefold()
+        )
+    )
 
-    active_ordered = sorted(stats, key=lambda name: (-stats[name]["wins"], stats[name]["losses"], name.casefold()))
-    active_ordered = [name for name in active_ordered if name not in elim_map]
-    elim_ordered = sorted(eliminated, key=lambda name: (-elim_map[name], -stats[name]["wins"], stats[name]["losses"], name.casefold()))
+    elim_ordered = sorted(
+        [name for name in game_stats if name in elim_map],
+        key=lambda name: (
+            -int(elim_map[name]["day"]),
+            -series_stats[name]["wins"],
+            series_stats[name]["losses"],
+            -game_stats[name]["wins"],
+            game_stats[name]["losses"],
+            name.casefold()
+        )
+    )
 
-    rows: list[tuple[int, str, int, int, bool]] = []
+    rows: list[tuple[int, str, int, int, int, int, str | None]] = []
     place = 0
-    previous: tuple[int, int] | None = None
+    previous: tuple[int, int, int, int] | None = None
     for index, name in enumerate(active_ordered, start=1):
-        record = (stats[name]["wins"], stats[name]["losses"])
+        record = (series_stats[name]["wins"], series_stats[name]["losses"], game_stats[name]["wins"], game_stats[name]["losses"])
         if record != previous:
             place, previous = index, record
-        rows.append((place, name, *record, False))
+        rows.append((place, name, *record, None))
 
     start_elim_idx = len(active_ordered) + 1
-    prev_elim_key: tuple[int, int, int] | None = None
+    prev_elim_key: tuple[object, int, int, int, int] | None = None
     elim_place = start_elim_idx
     for offset, name in enumerate(elim_ordered):
         index = start_elim_idx + offset
-        elim_key = (elim_map[name], stats[name]["wins"], stats[name]["losses"])
+        elim_key = (elim_map[name]["day"], series_stats[name]["wins"], series_stats[name]["losses"], game_stats[name]["wins"], game_stats[name]["losses"])
         if elim_key != prev_elim_key:
             elim_place, prev_elim_key = index, elim_key
-        rows.append((elim_place, name, stats[name]["wins"], stats[name]["losses"], True))
+        rows.append((
+            elim_place,
+            name,
+            series_stats[name]["wins"],
+            series_stats[name]["losses"],
+            game_stats[name]["wins"],
+            game_stats[name]["losses"],
+            str(elim_map[name]["place"])
+        ))
 
     return rows
+
+
+class LiquipediaTableParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.tables: list[list[list[str]]] = []
+        self.table_stack: list[list[list[str]]] = []
+        self.curr_cell: list[str] = []
+        self.in_cell = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]):
+        if tag == "table":
+            self.table_stack.append([])
+        elif tag == "tr":
+            if self.table_stack:
+                self.table_stack[-1].append([])
+        elif tag in ("td", "th"):
+            self.curr_cell = []
+            self.in_cell = True
+
+    def handle_endtag(self, tag: str):
+        if tag in ("td", "th"):
+            if self.table_stack and self.table_stack[-1] and self.table_stack[-1][-1] is not None:
+                self.table_stack[-1][-1].append("".join(self.curr_cell).strip())
+            self.in_cell = False
+        elif tag == "table":
+            if self.table_stack:
+                finished_table = self.table_stack.pop()
+                if finished_table:
+                    self.tables.append(finished_table)
+
+    def handle_data(self, data: str):
+        if self.in_cell:
+            self.curr_cell.append(data)
+
+
+def fetch_liquipedia_hero_stats(states: dict[str, object]) -> dict[str, list[str]]:
+    """Fetch Top-10 hero statistics directly from Liquipedia Statistics page."""
+    cached = states.get("liquipedia_hero_stats")
+    if isinstance(cached, dict) and time.time() - cached.get("fetched_at", 0) < LIQUIPEDIA_CACHE_SECONDS:
+        return cached.get("data", {})
+
+    query = urlencode({"action": "parse", "page": "The_International/2026/Statistics", "format": "json"})
+    user_agent = os.getenv("LIQUIPEDIA_USER_AGENT", "TI2026DiscordBot/1.0 (GitHub Actions)")
+    try:
+        data = get_json(f"{LIQUIPEDIA_API}?{query}", {"User-Agent": user_agent, "Accept": "application/json"})
+        html = data.get("parse", {}).get("text", {}).get("*", "")
+        if not html:
+            return {}
+
+        parser = LiquipediaTableParser()
+        parser.feed(html)
+
+        heroes_data = []
+        for table in parser.tables:
+            for r in table:
+                if len(r) >= 16 and r[2].isdigit() and r[3].isdigit() and r[4].isdigit() and "%" in r[5] and r[15].isdigit():
+                    hero = r[1]
+                    picks = int(r[2])
+                    wins = int(r[3])
+                    losses = int(r[4])
+                    try:
+                        wr = float(r[5].replace("%", "").strip())
+                    except ValueError:
+                        wr = (wins / picks * 100) if picks else 0.0
+                    bans = int(r[15])
+                    heroes_data.append({
+                        "hero": hero,
+                        "picks": picks,
+                        "wins": wins,
+                        "losses": losses,
+                        "wr": wr,
+                        "bans": bans,
+                    })
+
+        if not heroes_data:
+            return {}
+
+        top_picks = sorted(heroes_data, key=lambda x: (-x["picks"], x["hero"]))[:10]
+        top_bans = sorted(heroes_data, key=lambda x: (-x["bans"], x["hero"]))[:10]
+
+        res = {
+            "picks": [f"{i+1}. {h['hero']} — {h['picks']} ігор ({round(h['wr'])}% WR, {h['wins']}-{h['losses']})" for i, h in enumerate(top_picks)],
+            "bans": [f"{i+1}. {h['hero']} — {h['bans']} банів ({round(h['wr'])}% WR, {h['wins']}-{h['losses']})" for i, h in enumerate(top_bans)],
+        }
+        states["liquipedia_hero_stats"] = {"fetched_at": time.time(), "data": res}
+        return res
+    except Exception as error:
+        print(f"Warning: could not fetch Liquipedia hero stats: {error}", file=sys.stderr)
+        return cached.get("data", {}) if isinstance(cached, dict) else {}
+
+
+def hero_stats(
+    matches: list[dict],
+    up_to_day: int,
+    heroes_catalog: dict[int, str],
+    liquipedia_hero_stats: dict[str, list[str]] | None = None,
+) -> dict[str, list[str]]:
+    """Calculate or provide Top-10 picked, banned, and highest winrate heroes."""
+    if liquipedia_hero_stats and (liquipedia_hero_stats.get("picks") or liquipedia_hero_stats.get("bans")):
+        return liquipedia_hero_stats
+
+    played = [m for m in matches if tournament_day(m) <= up_to_day and m.get("radiant_win") is not None]
+    
+    picks: dict[int, int] = {}
+    bans: dict[int, int] = {}
+    wins: dict[int, int] = {}
+
+    for m in played:
+        r_win = m.get("radiant_win")
+        pb_list = m.get("picks_bans") or []
+        for pb in pb_list:
+            hid = pb.get("hero_id")
+            if not hid:
+                continue
+            is_pick = pb.get("is_pick")
+            team_slot = pb.get("team")  # 0 for Radiant, 1 for Dire
+            if is_pick:
+                picks[hid] = picks.get(hid, 0) + 1
+                if (team_slot == 0 and r_win) or (team_slot == 1 and not r_win):
+                    wins[hid] = wins.get(hid, 0) + 1
+            else:
+                bans[hid] = bans.get(hid, 0) + 1
+
+    if not picks and not bans:
+        return {}
+
+    # Top 10 picks
+    top_picks = sorted(picks.items(), key=lambda x: (-x[1], heroes_catalog.get(x[0], str(x[0]))))[:10]
+    # Top 10 bans
+    top_bans = sorted(bans.items(), key=lambda x: (-x[1], heroes_catalog.get(x[0], str(x[0]))))[:10]
+
+    def pick_label(hid: int, cnt: int) -> str:
+        w = wins.get(hid, 0)
+        l = cnt - w
+        wr = round((w / cnt) * 100) if cnt else 0
+        name = heroes_catalog.get(hid, f"Hero {hid}")
+        return f"{name} — {cnt} ігор ({wr}% WR, {w}-{l})"
+
+    def ban_label(hid: int, cnt: int) -> str:
+        p_cnt = picks.get(hid, 0)
+        w = wins.get(hid, 0)
+        l = p_cnt - w
+        wr = round((w / p_cnt) * 100) if p_cnt else 0
+        name = heroes_catalog.get(hid, f"Hero {hid}")
+        if p_cnt > 0:
+            return f"{name} — {cnt} банів ({wr}% WR, {w}-{l})"
+        return f"{name} — {cnt} банів (0 ігор)"
+
+    return {
+        "picks": [f"{i+1}. {pick_label(hid, cnt)}" for i, (hid, cnt) in enumerate(top_picks)],
+        "bans": [f"{i+1}. {ban_label(hid, cnt)}" for i, (hid, cnt) in enumerate(top_bans)],
+    }
+
+
+def fetch_heroes_catalog_cached(states: dict[str, object]) -> dict[int, str]:
+    """Fetch OpenDota heroes list and return map of hero_id -> localized_name."""
+    cached = states.get("heroes_catalog")
+    if isinstance(cached, dict) and cached:
+        return {int(k): v for k, v in cached.items()}
+    try:
+        data = get_json(f"{OPENDOTA_API_ENDPOINT}/constants/heroes", {"User-Agent": "ti2026-discord-webhook/1.0"})
+        heroes = {int(h["id"]): h.get("localized_name", f"Hero {h['id']}") for h in data.values() if isinstance(h, dict) and h.get("id")}
+        states["heroes_catalog"] = heroes
+        return heroes
+    except Exception as error:
+        print(f"Warning: could not fetch heroes catalog: {error}", file=sys.stderr)
+        return {}
 
 
 def format_duration(seconds: int | None) -> str:
@@ -420,7 +669,9 @@ def message(
     now: int,
     is_grand_final: bool = False,
     day: int | None = None,
-) -> str:
+    heroes_catalog: dict[int, str] | None = None,
+    liquipedia_hero_stats: dict[str, list[str]] | None = None,
+) -> str | list[str]:
     if kind == "tournament_day":
         if day is None and match:
             day = tournament_day(match)
@@ -434,15 +685,31 @@ def message(
     if kind == "day_finished":
         if day is None and match:
             day = tournament_day(match)
-        # Simple text format: 1. 🇷🇺 Team (4-2) or 16. 🇪🇺 OG вибули, ordered by current place in the tournament
+        # Format: 1. 🇷🇺 Team 4-1 (9-4) or 16. 🇪🇺 OG (13-16 місце)
         table = "".join(
-            f"{place}. {team_label(name, catalog)} вибули\n"
-            if eliminated
-            else f"{place}. {team_label(name, catalog)} ({wins}-{losses})\n"
-            for place, name, wins, losses, eliminated in standings(matches, day or 0)
+            f"{place}. {team_label(name, catalog)} ({elim_place})\n"
+            if elim_place
+            else f"{place}. {team_label(name, catalog)} {s_wins}-{s_losses} ({g_wins}-{g_losses})\n"
+            for place, name, s_wins, s_losses, g_wins, g_losses, elim_place in standings(matches, day or 0)
         )
-        res = f"🏆 **ДЕНЬ {day} THE INTERNATIONAL 2026 ЗАВЕРШИВСЯ**\n\n{table}"
-        return res + "\n\u200b\n"
+        
+        sections = [f"🏆 **ДЕНЬ {day} THE INTERNATIONAL 2026 ЗАВЕРШИВСЯ**\n\n{table.strip()}"]
+        
+        # Add hero stats if available
+        h_stats = hero_stats(matches, day or 0, heroes_catalog or {}, liquipedia_hero_stats=liquipedia_hero_stats)
+        if h_stats:
+            h_sections = []
+            if h_stats.get("picks"):
+                h_sections.append("🗡 **Топ-10 піків:**\n" + "\n".join(h_stats["picks"]))
+            if h_stats.get("bans"):
+                h_sections.append("🚫 **Топ-10 банів:**\n" + "\n".join(h_stats["bans"]))
+            if h_sections:
+                sections.append("🧙‍♂️ **ТОП ГЕРОЇВ ТУРНІРУ**\n\n" + "\n\n".join(h_sections))
+
+        full_text = "\n\n".join(sections) + "\n\u200b\n"
+        if len(full_text) <= 2000:
+            return full_text
+        return [sec + "\n\u200b\n" for sec in sections]
 
     series_games = games_in_series(match, matches)
     first_game = series_games[0]
@@ -515,9 +782,25 @@ def announce(ctx: dict, day_states: dict[str, object], key: str, kind: str, matc
         day_states[key] = "announced"
         return False
     try:
-        publish(ctx["webhook_url"], message(kind, ctx["league"], match, ctx["matches"], ctx["catalog"], ctx["now"], is_grand_final, day=day))
-        # Small delay to avoid Discord rate limits when re-sending many messages
-        time.sleep(0.5)
+        msg = message(
+            kind,
+            ctx["league"],
+            match,
+            ctx["matches"],
+            ctx["catalog"],
+            ctx["now"],
+            is_grand_final,
+            day=day,
+            heroes_catalog=ctx.get("heroes_catalog"),
+            liquipedia_hero_stats=ctx.get("liquipedia_hero_stats"),
+        )
+        if isinstance(msg, list):
+            for part in msg:
+                publish(ctx["webhook_url"], part)
+                time.sleep(0.5)
+        else:
+            publish(ctx["webhook_url"], msg)
+            time.sleep(0.5)
         day_states[key] = "announced"
         print(f"  ✓ {label}")
         return True
@@ -532,8 +815,13 @@ def main() -> int:
     states = load_states()
     liquipedia = liquipedia_context(states)
     catalog = load_team_catalog()
+    heroes_catalog = fetch_heroes_catalog_cached(states)
+    liquipedia_hero_stats = fetch_liquipedia_hero_stats(states)
     
     league, matches = fetch_matches_cached(states, OPENDOTA_LEAGUE_ID)
+    if not matches:
+        print("Warning: No matches available to process. Exiting run safely.")
+        return 0
     
     # Sort matches by start time to process them chronologically
     sorted_matches = sorted(matches, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))
@@ -553,6 +841,8 @@ def main() -> int:
         "matches": matches,
         "liquipedia": liquipedia,
         "catalog": catalog,
+        "heroes_catalog": heroes_catalog,
+        "liquipedia_hero_stats": liquipedia_hero_stats,
         "now": now,
     }
 
