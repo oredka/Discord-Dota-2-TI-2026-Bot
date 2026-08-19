@@ -281,10 +281,66 @@ def game_number(match: dict, matches: list[dict]) -> int:
     return 1
 
 
-def standings(matches: list[dict], day: int) -> list[tuple[int, str, int, int]]:
+def eliminated_teams(matches: list[dict], up_to_day: int) -> dict[str, int]:
+    """Map of team names to the tournament day on which they were eliminated."""
+    series_map: dict[str, list[dict]] = {}
+    for m in matches:
+        if tournament_day(m) > up_to_day:
+            continue
+        sk = series_key(m)
+        series_map.setdefault(sk, []).append(m)
+
+    sorted_series = sorted(series_map.values(), key=lambda sm: min(g.get("start_time", 0) for g in sm))
+
+    swiss_losses: dict[str, int] = {}
+    swiss_wins: dict[str, int] = {}
+    playoff_losses: dict[str, int] = {}
+    elimination_day: dict[str, int] = {}
+
+    for sm in sorted_series:
+        first = sm[0]
+        s_day = tournament_day(first)
+        r_name, d_name = teams(first)
+        r_name, d_name = r_name.strip(), d_name.strip()
+        r_id = first.get("radiant_team_id")
+        d_id = first.get("dire_team_id")
+        r_wins = sum(1 for gm in sm if (gm.get("radiant_win") and gm.get("radiant_team_id") == r_id) or (not gm.get("radiant_win") and gm.get("dire_team_id") == r_id))
+        d_wins = sum(1 for gm in sm if (gm.get("radiant_win") and gm.get("radiant_team_id") == d_id) or (not gm.get("radiant_win") and gm.get("dire_team_id") == d_id))
+
+        swiss_losses.setdefault(r_name, 0)
+        swiss_losses.setdefault(d_name, 0)
+        swiss_wins.setdefault(r_name, 0)
+        swiss_wins.setdefault(d_name, 0)
+        playoff_losses.setdefault(r_name, 0)
+        playoff_losses.setdefault(d_name, 0)
+
+        if r_wins > d_wins:
+            winner, loser = r_name, d_name
+        elif d_wins > r_wins:
+            winner, loser = d_name, r_name
+        else:
+            continue
+
+        if swiss_wins[loser] < 4:
+            swiss_losses[loser] += 1
+            if swiss_losses[loser] >= 4 and loser not in elimination_day:
+                elimination_day[loser] = s_day
+        else:
+            playoff_losses[loser] += 1
+            if playoff_losses[loser] >= 2 and loser not in elimination_day:
+                elimination_day[loser] = s_day
+
+        if swiss_wins[winner] < 4:
+            swiss_wins[winner] += 1
+
+    return elimination_day
+
+
+def standings(matches: list[dict], day: int) -> list[tuple[int, str, int, int, bool]]:
     """Games won/lost per team up to the end of `day`, ordered by current place in the tournament.
 
-    Teams are ranked by wins, then by fewest losses; equal records share a place.
+    Active teams are ranked first by wins, then by fewest losses; equal records share a place.
+    Eliminated teams are placed below active teams, ranked by stage/day eliminated and game record.
     """
     stats: dict[str, dict[str, int]] = {}
     for match in matches:
@@ -305,16 +361,34 @@ def standings(matches: list[dict], day: int) -> list[tuple[int, str, int, int]]:
         stats[winner]["wins"] += 1
         stats[loser]["losses"] += 1
 
-    ordered = sorted(stats, key=lambda name: (-stats[name]["wins"], stats[name]["losses"], name.casefold()))
+    elim_map = eliminated_teams(matches, day)
 
-    rows: list[tuple[int, str, int, int]] = []
+    active = [name for name in stats if name not in elim_map]
+    eliminated = [name for name in stats if name in elim_map]
+
+    active_ordered = sorted(stats, key=lambda name: (-stats[name]["wins"], stats[name]["losses"], name.casefold()))
+    active_ordered = [name for name in active_ordered if name not in elim_map]
+    elim_ordered = sorted(eliminated, key=lambda name: (-elim_map[name], -stats[name]["wins"], stats[name]["losses"], name.casefold()))
+
+    rows: list[tuple[int, str, int, int, bool]] = []
     place = 0
     previous: tuple[int, int] | None = None
-    for index, name in enumerate(ordered, start=1):
+    for index, name in enumerate(active_ordered, start=1):
         record = (stats[name]["wins"], stats[name]["losses"])
         if record != previous:
             place, previous = index, record
-        rows.append((place, name, *record))
+        rows.append((place, name, *record, False))
+
+    start_elim_idx = len(active_ordered) + 1
+    prev_elim_key: tuple[int, int, int] | None = None
+    elim_place = start_elim_idx
+    for offset, name in enumerate(elim_ordered):
+        index = start_elim_idx + offset
+        elim_key = (elim_map[name], stats[name]["wins"], stats[name]["losses"])
+        if elim_key != prev_elim_key:
+            elim_place, prev_elim_key = index, elim_key
+        rows.append((elim_place, name, stats[name]["wins"], stats[name]["losses"], True))
+
     return rows
 
 
@@ -360,10 +434,12 @@ def message(
     if kind == "day_finished":
         if day is None and match:
             day = tournament_day(match)
-        # Simple text format: 1. 🇷🇺 Team (4-2), ordered by current place in the tournament
+        # Simple text format: 1. 🇷🇺 Team (4-2) or 16. 🇪🇺 OG вибули, ordered by current place in the tournament
         table = "".join(
-            f"{place}. {team_label(name, catalog)} ({wins}-{losses})\n"
-            for place, name, wins, losses in standings(matches, day or 0)
+            f"{place}. {team_label(name, catalog)} вибули\n"
+            if eliminated
+            else f"{place}. {team_label(name, catalog)} ({wins}-{losses})\n"
+            for place, name, wins, losses, eliminated in standings(matches, day or 0)
         )
         res = f"🏆 **ДЕНЬ {day} THE INTERNATIONAL 2026 ЗАВЕРШИВСЯ**\n\n{table}"
         return res + "\n\u200b\n"
