@@ -26,7 +26,6 @@ jobs:
     # We removed the 'if: github.actor != ...' condition to ensure scheduled runs always execute.
     # Since we only trigger on schedule and dispatch, there is no risk of a commit loop.
     env:
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       SERIES_BEST_OF: ${{ vars.SERIES_BEST_OF || '3' }}
       LIQUIPEDIA_USER_AGENT: ${{ vars.LIQUIPEDIA_USER_AGENT || 'TI2026DiscordBot/1.0 (GitHub Actions)' }}
