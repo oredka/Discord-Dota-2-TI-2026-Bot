@@ -52,13 +52,26 @@ def post_json(url: str, payload: dict, headers: dict[str, str] | None = None) ->
         raise RuntimeError(f"Network error: {error}") from error
 
 
-def get_json(url: str, headers: dict[str, str]) -> dict:
-    try:
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        return response.json()
-    except (requests.exceptions.RequestException, json.JSONDecodeError) as error:
-        raise RuntimeError(f"Liquipedia request failed: {error}") from error
+def get_json(url: str, headers: dict[str, str], max_retries: int = 3, retry_delay: float = 2.0) -> dict:
+    last_error: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            if response.status_code in (429, 500, 502, 503, 504, 520, 521, 522, 524):
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+            response.raise_for_status()
+            return response.json()
+        except (requests.exceptions.RequestException, json.JSONDecodeError) as error:
+            last_error = error
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (attempt + 1))
+            else:
+                raise RuntimeError(f"Request to {url} failed: {error}") from error
+    if last_error:
+        raise RuntimeError(f"Request to {url} failed: {last_error}") from last_error
+    return {}
 
 
 def liquipedia_context(states: dict[str, object]) -> dict[str, object]:
@@ -89,10 +102,11 @@ def fetch_matches_cached(states: dict[str, object], league_id: int) -> tuple[dic
         print(f"Fetched {len(matches)} matches from OpenDota.")
         return league, matches
     except RuntimeError as error:
-        if isinstance(cached, dict):
-            print(f"Error: {error}; using stale OpenDota cache.", file=sys.stderr)
+        if isinstance(cached, dict) and cached.get("matches"):
+            print(f"Warning: {error}; using stale OpenDota cache.", file=sys.stderr)
             return cached.get("league", {}), cached.get("matches", [])
-        raise
+        print(f"Warning: could not fetch OpenDota matches: {error}", file=sys.stderr)
+        return {"displayName": "The International 2026", "id": league_id}, []
 
 
 def fetch_matches(league_id: int) -> tuple[dict, list[dict]]:
@@ -805,6 +819,9 @@ def main() -> int:
     liquipedia_hero_stats = fetch_liquipedia_hero_stats(states)
     
     league, matches = fetch_matches_cached(states, OPENDOTA_LEAGUE_ID)
+    if not matches:
+        print("Warning: No matches available to process. Exiting run safely.")
+        return 0
     
     # Sort matches by start time to process them chronologically
     sorted_matches = sorted(matches, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))

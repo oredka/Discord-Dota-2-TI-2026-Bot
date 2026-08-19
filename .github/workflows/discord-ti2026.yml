@@ -27,6 +27,7 @@ jobs:
     # Since we only trigger on schedule and dispatch, there is no risk of a commit loop.
     env:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       SERIES_BEST_OF: ${{ vars.SERIES_BEST_OF || '3' }}
       LIQUIPEDIA_USER_AGENT: ${{ vars.LIQUIPEDIA_USER_AGENT || 'TI2026DiscordBot/1.0 (GitHub Actions)' }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -51,7 +52,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- 'states/match_states_day*.json'
+          git add -- 'states/match_states*.json'
           if git diff --cached --quiet; then
             echo "No new match states to remember."
             exit 0
