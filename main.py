@@ -26,6 +26,20 @@ TEAM_CATALOG_FILE = Path(os.getenv("TEAM_CATALOG_FILE", "team_metadata.json"))
 # SERIES_BEST_OF = int(os.getenv("SERIES_BEST_OF", "3"))  # Removed in favor of dynamic detection
 LIQUIPEDIA_CACHE_SECONDS = 600
 TI_START_DATE = datetime(2026, 8, 13, tzinfo=UTC)
+REST_DAYS = {5}
+MIN_SERIES_PER_DAY = {
+    1: 12,
+    2: 12,
+    3: 12,
+    4: 5,
+    5: 0,
+    6: 2,
+    7: 2,
+    8: 2,
+    9: 2,
+    10: 2,
+    11: 2,
+}
 # Set to 1 to record every current result in the state without posting anything to Discord.
 SILENT_BOOTSTRAP = os.getenv("SILENT_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes")
 
@@ -176,14 +190,32 @@ def match_end_time(match: dict) -> int:
     return start + (match.get("duration") or 0) if start else 0
 
 
-def series_key(match: dict) -> str:
-    if match.get("series_id"):
-        return f"series:{match['series_id']}"
-    # Fallback to team IDs if series_id is missing
+def team_pair(match: dict) -> tuple:
     r_id = match.get("radiant_team_id") or 0
     d_id = match.get("dire_team_id") or 0
-    ids = sorted([r_id, d_id])
-    return f"pair:{ids[0]}:{ids[1]}"
+    if r_id and d_id and r_id != d_id:
+        return tuple(sorted([r_id, d_id]))
+    r_name = (match.get("radiant_name") or "Radiant").strip().casefold()
+    d_name = (match.get("dire_name") or "Dire").strip().casefold()
+    return tuple(sorted([r_name, d_name]))
+
+
+def series_key(match: dict) -> str:
+    day = tournament_day(match)
+    pair = team_pair(match)
+    return f"day:{day}:pair:{pair[0]}:{pair[1]}"
+
+
+def is_series_announced(day_states: dict[str, object], match: dict) -> bool:
+    s_key = series_key(match)
+    if f"done:{s_key}" in day_states:
+        return True
+    if match.get("series_id") and f"done:series:{match['series_id']}" in day_states:
+        return True
+    pair = team_pair(match)
+    if f"done:pair:{pair[0]}:{pair[1]}" in day_states:
+        return True
+    return False
 
 
 TI_START_TIMESTAMP = 1786633200  # Aug 13 15:00:00 UTC (Day 1 Start)
@@ -228,25 +260,45 @@ def games_in_series(match: dict, matches: list[dict]) -> list[dict]:
     return sorted(series_games, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))
 
 
+def count_series_wins(sm: list[dict], left_team_id: int | None, left_name: str, right_team_id: int | None, right_name: str) -> tuple[int, int]:
+    left_wins = right_wins = 0
+    for gm in sm:
+        outcome = gm.get("radiant_win")
+        if outcome is None:
+            continue
+        g_rad_id = gm.get("radiant_team_id")
+        g_rad_name = (gm.get("radiant_name") or "").strip().casefold()
+
+        is_left_radiant = (g_rad_id == left_team_id if left_team_id else g_rad_name == left_name.casefold())
+        is_left_dire = (gm.get("dire_team_id") == left_team_id if left_team_id else (gm.get("dire_name") or "").strip().casefold() == left_name.casefold())
+
+        if is_left_radiant:
+            if outcome: left_wins += 1
+            else: right_wins += 1
+        elif is_left_dire:
+            if outcome: right_wins += 1
+            else: left_wins += 1
+        else:
+            is_right_radiant = (g_rad_id == right_team_id if right_team_id else g_rad_name == right_name.casefold())
+            if is_right_radiant:
+                if outcome: right_wins += 1
+                else: left_wins += 1
+            else:
+                if outcome: left_wins += 1
+                else: right_wins += 1
+    return left_wins, right_wins
+
+
 def score(match: dict, matches: list[dict]) -> tuple[int, int]:
     series_games = games_in_series(match, matches)
+    if not series_games:
+        return 0, 0
     first_game = series_games[0]
     left_team_id = first_game.get("radiant_team_id")
     right_team_id = first_game.get("dire_team_id")
-    
-    left_wins = right_wins = 0
-    for game in series_games:
-        outcome = game.get("radiant_win")
-        if outcome is None:
-            continue
-        g_radiant_id = game.get("radiant_team_id")
-        if g_radiant_id == left_team_id:
-            if outcome: left_wins += 1
-            else: right_wins += 1
-        elif g_radiant_id == right_team_id:
-            if outcome: right_wins += 1
-            else: left_wins += 1
-    return left_wins, right_wins
+    left_name = (first_game.get("radiant_name") or "Radiant").strip()
+    right_name = (first_game.get("dire_name") or "Dire").strip()
+    return count_series_wins(series_games, left_team_id, left_name, right_team_id, right_name)
 
 
 def score_up_to(match: dict, matches: list[dict]) -> tuple[int, int]:
@@ -257,6 +309,8 @@ def score_up_to(match: dict, matches: list[dict]) -> tuple[int, int]:
     first_game = series_games[0]
     left_team_id = first_game.get("radiant_team_id")
     right_team_id = first_game.get("dire_team_id")
+    left_name = (first_game.get("radiant_name") or "Radiant").strip()
+    right_name = (first_game.get("dire_name") or "Dire").strip()
 
     try:
         current_game_index = -1
@@ -272,20 +326,7 @@ def score_up_to(match: dict, matches: list[dict]) -> tuple[int, int]:
         return 0, 0
         
     games_to_count = series_games[:current_game_index + 1]
-    
-    left_wins = right_wins = 0
-    for game in games_to_count:
-        outcome = game.get("radiant_win")
-        if outcome is None:
-            continue
-        g_radiant_id = game.get("radiant_team_id")
-        if g_radiant_id == left_team_id:
-            if outcome: left_wins += 1
-            else: right_wins += 1
-        elif g_radiant_id == right_team_id:
-            if outcome: right_wins += 1
-            else: left_wins += 1
-    return left_wins, right_wins
+    return count_series_wins(games_to_count, left_team_id, left_name, right_team_id, right_name)
 
 
 def game_number(match: dict, matches: list[dict]) -> int:
@@ -319,8 +360,7 @@ def eliminated_teams(matches: list[dict], up_to_day: int) -> dict[str, dict[str,
         r_name, d_name = r_name.strip(), d_name.strip()
         r_id = first.get("radiant_team_id")
         d_id = first.get("dire_team_id")
-        r_wins = sum(1 for gm in sm if (gm.get("radiant_win") and gm.get("radiant_team_id") == r_id) or (not gm.get("radiant_win") and gm.get("dire_team_id") == r_id))
-        d_wins = sum(1 for gm in sm if (gm.get("radiant_win") and gm.get("radiant_team_id") == d_id) or (not gm.get("radiant_win") and gm.get("dire_team_id") == d_id))
+        r_wins, d_wins = count_series_wins(sm, r_id, r_name, d_id, d_name)
 
         swiss_losses.setdefault(r_name, 0)
         swiss_losses.setdefault(d_name, 0)
@@ -406,8 +446,7 @@ def standings(matches: list[dict], day: int) -> list[tuple[int, str, int, int, i
         r_name, d_name = r_name.strip(), d_name.strip()
         r_id = first.get("radiant_team_id")
         d_id = first.get("dire_team_id")
-        r_wins = sum(1 for gm in sm if (gm.get("radiant_win") and gm.get("radiant_team_id") == r_id) or (not gm.get("radiant_win") and gm.get("dire_team_id") == r_id))
-        d_wins = sum(1 for gm in sm if (gm.get("radiant_win") and gm.get("radiant_team_id") == d_id) or (not gm.get("radiant_win") and gm.get("dire_team_id") == d_id))
+        r_wins, d_wins = count_series_wins(sm, r_id, r_name, d_id, d_name)
 
         if r_wins > d_wins and (r_wins >= 2 or d_wins >= 2 or len(sm) == 1):
             if r_name in series_stats and d_name in series_stats:
@@ -866,7 +905,7 @@ def main() -> int:
 
         if not day_matches:
             # On rest days (no matches scheduled/played), announce the day if it hasn't been announced yet
-            if day <= curr_day and f"day:{day}" not in day_states:
+            if day in REST_DAYS and day <= curr_day and f"day:{day}" not in day_states:
                 if announce(ctx, day_states, f"day:{day}", "tournament_day_no_matches", None, f"Day {day} announcement (no matches)", day=day):
                     published += 1
             save_states(day_states, day)
@@ -915,9 +954,12 @@ def main() -> int:
 
                 if is_series_end:
                     series_state_key = f"done:{series_key(match)}"
-                    label = f"Series finished: {radiant} vs {dire} ({left_wins} — {right_wins})"
-                    if announce(ctx, day_states, series_state_key, "series_finished", match, label, is_grand_final):
-                        published += 1
+                    if not is_series_announced(day_states, match):
+                        label = f"Series finished: {radiant} vs {dire} ({left_wins} — {right_wins})"
+                        if announce(ctx, day_states, series_state_key, "series_finished", match, label, is_grand_final):
+                            published += 1
+                    else:
+                        day_states[series_state_key] = "announced"
             else:
                 # IMPORTANT: If the game was already announced, we MUST still check if the series 
                 # completion needs to be announced. This handles cases where a game was posted 
@@ -925,30 +967,59 @@ def main() -> int:
                 left_wins, right_wins = score_up_to(match, matches)
                 if left_wins >= wins_required or right_wins >= wins_required:
                     series_state_key = f"done:{series_key(match)}"
-                    label = f"Series finished (delayed): {radiant} vs {dire} ({left_wins} — {right_wins})"
-                    if announce(ctx, day_states, series_state_key, "series_finished", match, label, is_grand_final):
-                        published += 1
+                    if not is_series_announced(day_states, match):
+                        label = f"Series finished (delayed): {radiant} vs {dire} ({left_wins} — {right_wins})"
+                        if announce(ctx, day_states, series_state_key, "series_finished", match, label, is_grand_final):
+                            published += 1
+                    else:
+                        day_states[series_state_key] = "announced"
 
             processed += 1
 
         # The results table closes the day once every game of that day has a result.
-        # Added a safety buffer: only close the day if at least 2 hours have passed since the last match ended,
-        # or if it's already the next day, to account for API delays or late-added matches.
+        # Only close the day when:
+        # 1. All matches of the day are finished
+        # 2. All series of the day are completed (reach required wins)
+        # 3. Minimum expected series for the day have finished AND 1 hour buffer passed, OR it's next day (04:00 UTC)
         if day_matches and all(match_state(m, now) == "finished" for m in day_matches):
             last_match = max(day_matches, key=match_end_time)
             last_match_end = match_end_time(last_match)
-            
-            # 2 hours safety buffer (7200 seconds)
-            is_time_safe = (now > last_match_end + 7200)
-            
-            # Or if the current time is already well into the next day (04:00 UTC of next day)
-            # This handles long days where matches might go late.
             next_day_start = int((TI_START_DATE + timedelta(days=day)).timestamp())
-            is_next_day = (now > next_day_start + 14400) # 4 hours into next day
+            is_next_day = (now >= next_day_start + 14400) # 4 hours into next day
 
-            if is_time_safe or is_next_day:
+            # Group day matches by series
+            day_series_map: dict[str, list[dict]] = {}
+            for m in day_matches:
+                day_series_map.setdefault(series_key(m), []).append(m)
+
+            all_series_complete = True
+            completed_series_count = 0
+            for sk, sm in day_series_map.items():
+                first_gm = sm[0]
+                b_of = get_series_best_of(first_gm, day_matches, day)
+                w_req = b_of // 2 + 1
+                w1, w2 = score(first_gm, day_matches)
+                if w1 >= w_req or w2 >= w_req:
+                    completed_series_count += 1
+                else:
+                    all_series_complete = False
+
+            min_expected = MIN_SERIES_PER_DAY.get(day, 2)
+            has_expected_series = (completed_series_count >= min_expected)
+
+            is_ready_to_close = (
+                (all_series_complete and has_expected_series and now > last_match_end + 3600)
+                or (day < curr_day and all_series_complete and now > last_match_end + 3600)
+                or is_next_day
+            )
+
+            if is_ready_to_close:
                 if announce(ctx, day_states, f"day:{day}:finished", "day_finished", last_match, f"Day {day} finished announcement"):
                     published += 1
+            else:
+                # If day was prematurely marked finished in state but more games/series are in progress, retract state
+                if not all_series_complete or (day == curr_day and not has_expected_series and not is_next_day):
+                    day_states.pop(f"day:{day}:finished", None)
 
         save_states(day_states, day)
 
