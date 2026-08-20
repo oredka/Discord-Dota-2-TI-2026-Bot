@@ -94,10 +94,14 @@ class TestBotFixes(unittest.TestCase):
         self.assertEqual(completed_series, 1)
         self.assertLess(completed_series, main.MIN_SERIES_PER_DAY[8])
         
-        # Now series 2 plays
+        # Now series 2, 3, 4 plays
         g3 = {"match_id": 3, "radiant_win": True, "start_time": d8_base + 8000, "duration": 3600, "radiant_team_id": 30, "dire_team_id": 40}
         g4 = {"match_id": 4, "radiant_win": True, "start_time": d8_base + 12000, "duration": 3600, "radiant_team_id": 30, "dire_team_id": 40}
-        day_matches.extend([g3, g4])
+        g5 = {"match_id": 5, "radiant_win": True, "start_time": d8_base + 16000, "duration": 3600, "radiant_team_id": 50, "dire_team_id": 60}
+        g6 = {"match_id": 6, "radiant_win": True, "start_time": d8_base + 20000, "duration": 3600, "radiant_team_id": 50, "dire_team_id": 60}
+        g7 = {"match_id": 7, "radiant_win": True, "start_time": d8_base + 24000, "duration": 3600, "radiant_team_id": 70, "dire_team_id": 80}
+        g8 = {"match_id": 8, "radiant_win": True, "start_time": d8_base + 28000, "duration": 3600, "radiant_team_id": 70, "dire_team_id": 80}
+        day_matches.extend([g3, g4, g5, g6, g7, g8])
         
         day_series_map = {}
         for m in day_matches:
@@ -109,7 +113,7 @@ class TestBotFixes(unittest.TestCase):
             if w1 >= 2 or w2 >= 2:
                 completed_series += 1
                 
-        self.assertEqual(completed_series, 2)
+        self.assertEqual(completed_series, 4)
         self.assertGreaterEqual(completed_series, main.MIN_SERIES_PER_DAY[8])
 
     def test_rest_days(self):
