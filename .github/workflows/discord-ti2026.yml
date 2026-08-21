@@ -11,6 +11,7 @@ on:
       - 'state.py'
       - 'http_client.py'
       - 'api/**'
+      - 'uk_text.py'
       - 'tournament_config.json'
       - 'team_metadata.json'
       - '.github/workflows/discord-ti2026.yml'

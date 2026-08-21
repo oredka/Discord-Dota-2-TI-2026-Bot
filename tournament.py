@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from config import DEFAULT_BEST_OF, GRAND_FINAL_BEST_OF, GRAND_FINAL_DAY, START_DATE
+from uk_text import hero_ban_line, hero_pick_line
 
 
 def teams(match: dict) -> tuple[str, str]:
@@ -435,20 +436,18 @@ def hero_stats(
 
     def pick_label(hid: int, cnt: int) -> str:
         w = wins.get(hid, 0)
-        l = cnt - w
-        wr = round((w / cnt) * 100) if cnt else 0
+        losses = cnt - w
+        wr = (w / cnt) * 100 if cnt else 0
         name = heroes_catalog.get(hid, f"Hero {hid}")
-        return f"{name} — {cnt} ігор ({wr}% WR, {w}-{l})"
+        return hero_pick_line(name, cnt, wr, w, losses)
 
     def ban_label(hid: int, cnt: int) -> str:
         p_cnt = picks.get(hid, 0)
         w = wins.get(hid, 0)
-        l = p_cnt - w
-        wr = round((w / p_cnt) * 100) if p_cnt else 0
+        losses = p_cnt - w
+        wr = (w / p_cnt) * 100 if p_cnt else 0
         name = heroes_catalog.get(hid, f"Hero {hid}")
-        if p_cnt > 0:
-            return f"{name} — {cnt} банів ({wr}% WR, {w}-{l})"
-        return f"{name} — {cnt} банів (0 ігор)"
+        return hero_ban_line(name, cnt, p_cnt, wr, w, losses)
 
     return {
         "picks": [f"{i+1}. {pick_label(hid, cnt)}" for i, (hid, cnt) in enumerate(top_picks)],

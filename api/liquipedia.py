@@ -16,6 +16,7 @@ from config import (
     USER_AGENT,
 )
 from http_client import get_json
+from uk_text import hero_ban_line, hero_pick_line
 
 
 class LiquipediaTableParser(HTMLParser):
@@ -114,11 +115,11 @@ def fetch_liquipedia_hero_stats(states: dict[str, object]) -> dict[str, list[str
 
         res = {
             "picks": [
-                f"{i+1}. {h['hero']} — {h['picks']} ігор ({round(h['wr'])}% WR, {h['wins']}-{h['losses']})"
+                f"{i+1}. {hero_pick_line(h['hero'], h['picks'], h['wr'], h['wins'], h['losses'])}"
                 for i, h in enumerate(top_picks)
             ],
             "bans": [
-                f"{i+1}. {h['hero']} — {h['bans']} банів ({round(h['wr'])}% WR, {h['wins']}-{h['losses']})"
+                f"{i+1}. {hero_ban_line(h['hero'], h['bans'], h['picks'], h['wr'], h['wins'], h['losses'])}"
                 for i, h in enumerate(top_bans)
             ],
         }

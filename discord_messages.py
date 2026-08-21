@@ -47,7 +47,11 @@ def load_team_catalog() -> dict[str, dict[str, str]]:
         return {}
     try:
         data = json.loads(TEAM_CATALOG_FILE.read_text(encoding="utf-8-sig"))
-        return {name.casefold(): item for name, item in data.items() if isinstance(item, dict)}
+        return {
+            name.casefold(): {**item, "name": name}
+            for name, item in data.items()
+            if isinstance(item, dict)
+        }
     except json.JSONDecodeError:
         print("Warning: team_metadata.json is invalid; using team names only.", file=sys.stderr)
         return {}
@@ -58,8 +62,10 @@ def team_info(name: str, catalog: dict[str, dict[str, str]]) -> dict[str, str]:
 
 
 def team_label(name: str, catalog: dict[str, dict[str, str]]) -> str:
-    flag = team_info(name, catalog).get("flag", "")
-    return f"{flag} {name}".strip()
+    info = team_info(name, catalog)
+    display = info.get("name") or name
+    flag = info.get("flag", "")
+    return f"{flag} {display}".strip()
 
 
 def format_duration(seconds: int | None) -> str:
@@ -177,7 +183,7 @@ def _standings_table(matches: list[dict], day: int, catalog: dict[str, dict[str,
 
 
 def _hero_stats_description(h_stats: dict[str, list[str]]) -> str:
-    sections = ["🧙‍♂️ **ТОП ГЕРОЇВ ТУРНІРУ**"]
+    sections: list[str] = []
     if h_stats.get("picks"):
         sections.append("🗡 **Топ-10 піків:**\n" + "\n".join(h_stats["picks"]))
     if h_stats.get("bans"):

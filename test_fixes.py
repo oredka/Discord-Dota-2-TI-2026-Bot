@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from config import MIN_SERIES_PER_DAY, REST_DAYS
-from discord_messages import build_test_payload, discord_color, format_draft, load_team_catalog, message
+from discord_messages import build_test_payload, discord_color, format_draft, load_team_catalog, message, team_label
 from tournament import (
     game_number,
     get_series_best_of,
@@ -329,7 +329,12 @@ class TestDiscordEmbeds(unittest.TestCase):
         )
         embeds = _payloads(payload)[0]["embeds"]
         self.assertGreaterEqual(len(embeds), 2)
+        self.assertEqual(embeds[1]["title"], "🧙‍♂️ Топ героїв турніру")
         self.assertIn("Anti-Mage", embeds[1]["description"])
+        self.assertNotIn("ТОП ГЕРОЇВ", embeds[1]["description"])
+
+    def test_team_vision_uses_catalog_spelling(self):
+        self.assertEqual(team_label("TEAM VISION", self.catalog), "🇷🇺 Team Vision")
 
     def test_build_test_payload_kinds(self):
         for kind in ("day", "day_no_matches", "game_finished", "series_finished"):
@@ -355,6 +360,25 @@ class TestMatchDetailCache(unittest.TestCase):
         day_states = {"_match_details": {"123": {"picks_bans": pb}}}
         self.assertTrue(apply_cached_picks_bans(match, day_states))
         self.assertEqual(match["picks_bans"], pb)
+
+
+class TestUkrainianPhrases(unittest.TestCase):
+    def test_games_and_bans_forms(self):
+        from uk_text import bans_phrase, games_phrase, hero_pick_line
+
+        self.assertEqual(games_phrase(1), "1 гра")
+        self.assertEqual(games_phrase(2), "2 ігри")
+        self.assertEqual(games_phrase(4), "4 ігри")
+        self.assertEqual(games_phrase(5), "5 ігор")
+        self.assertEqual(games_phrase(11), "11 ігор")
+        self.assertEqual(games_phrase(21), "21 гра")
+        self.assertEqual(games_phrase(22), "22 ігри")
+        self.assertEqual(games_phrase(63), "63 ігри")
+        self.assertEqual(games_phrase(65), "65 ігор")
+        self.assertEqual(bans_phrase(1), "1 бан")
+        self.assertEqual(bans_phrase(2), "2 бани")
+        self.assertEqual(bans_phrase(123), "123 бани")
+        self.assertIn("65 ігор", hero_pick_line("Hoodwink", 65, 43.1, 28, 37))
 
 
 if __name__ == "__main__":
