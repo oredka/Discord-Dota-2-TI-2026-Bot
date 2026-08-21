@@ -625,11 +625,29 @@ def format_duration(seconds: int | None) -> str:
     return f"{seconds // 60}:{seconds % 60:02d}" if seconds else "—"
 
 
+def ordered_day_series_keys(day_matches: list[dict]) -> list[str]:
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for match in day_matches:
+        grouped[series_key(match)].append(match)
+    return sorted(grouped, key=lambda key: min((game.get("start_time") or 0) for game in grouped[key]))
+
+
+def is_grand_final_series(match: dict, day_matches: list[dict], day: int) -> bool:
+    """Day 11: first series is Lower Bracket Final (Bo3), second series is Grand Final (Bo5)."""
+    if day != 11 or not day_matches:
+        return False
+    series_keys = ordered_day_series_keys(day_matches)
+    return len(series_keys) >= 2 and series_key(match) == series_keys[1]
+
+
 def get_series_best_of(match: dict, day_matches: list[dict], day: int) -> int:
-    """TI 2026: Grand Final (the last match of Day 11) is Bo5, others are Bo3."""
-    if day == 11 and match == day_matches[-1]:
-        return 5
-    return 3
+    """TI 2026: Grand Final is Bo5 (3-0 / 3-1 / 3-2). Lower Bracket Final and every other series are Bo3 (2-0 / 2-1)."""
+    return 5 if is_grand_final_series(match, day_matches, day) else 3
+
+
+def series_is_complete(left_wins: int, right_wins: int, best_of: int) -> bool:
+    """True once a team has the wins needed for this format: 2 in Bo3, 3 in Bo5."""
+    return max(left_wins, right_wins) >= best_of // 2 + 1
 
 
 def message(
@@ -693,20 +711,19 @@ def message(
 
     left_total, right_total = score(match, matches)
     winner_name = left_name if left_total > right_total else right_name
+    winner_label = team_label(winner_name, catalog)
     last_game_duration = format_duration(match.get("duration"))
     last_game_num = game_number(match, matches)
-
-    if is_grand_final:
-        return (
-            f"🏆🥇 **ПЕРЕМОЖЕЦЬ THE INTERNATIONAL 2026**\n"
-            f"{team_label(winner_name, catalog)} ({left_total} — {right_total})\n"
-            f"⏱ Тривалість гри {last_game_num}: {last_game_duration}\n\u200b\n"
-        )
+    winner_line = (
+        f"🥇 ПЕРЕМОЖЕЦЬ THE INTERNATIONAL 2026 - {winner_label}!"
+        if is_grand_final
+        else f"🥇 Переможець: {winner_label}"
+    )
     return (
         f"🏆 **МАТЧ ЗАВЕРШИВСЯ**\n"
         f"{left_label} {left_total} — {right_total} {right_label}\n"
         f"⏱ Тривалість гри {last_game_num}: {last_game_duration}\n"
-        f"🥇 Переможець: {team_label(winner_name, catalog)}\n\u200b\n"
+        f"{winner_line}\n\u200b\n"
     )
 
 
@@ -805,9 +822,9 @@ def _day_series_progress(day: int, day_matches: list[dict]) -> tuple[bool, int]:
     all_series_complete = True
     for sm in day_series_map.values():
         first_gm = sm[0]
-        wins_required = get_series_best_of(first_gm, day_matches, day) // 2 + 1
+        best_of = get_series_best_of(first_gm, day_matches, day)
         w1, w2 = score(first_gm, day_matches)
-        if w1 >= wins_required or w2 >= wins_required:
+        if series_is_complete(w1, w2, best_of):
             completed_series_count += 1
         else:
             all_series_complete = False
@@ -893,11 +910,10 @@ def main() -> int:
                 continue
 
             best_of = get_series_best_of(match, day_matches, day)
-            wins_required = best_of // 2 + 1
-            is_grand_final = day == 11 and match == day_matches[-1]
             already_announced_game = match_id in day_states
             left_wins, right_wins = score_up_to(match, matches)
-            is_series_end = left_wins >= wins_required or right_wins >= wins_required
+            is_series_end = series_is_complete(left_wins, right_wins, best_of)
+            is_grand_final = is_series_end and is_grand_final_series(match, day_matches, day)
 
             if not already_announced_game:
                 if not is_series_end:
