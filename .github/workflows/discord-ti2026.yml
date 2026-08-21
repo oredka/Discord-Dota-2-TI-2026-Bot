@@ -8,7 +8,6 @@ on:
       - 'team_metadata.json'
       - '.github/workflows/discord-ti2026.yml'
   schedule:
-    # Every 10 minutes (broad coverage)
     - cron: "*/10 * 13-24 8 *"
   workflow_dispatch:
 
@@ -23,11 +22,8 @@ concurrency:
 jobs:
   publish-update:
     runs-on: ubuntu-latest
-    # We removed the 'if: github.actor != ...' condition to ensure scheduled runs always execute.
-    # Since we only trigger on schedule and dispatch, there is no risk of a commit loop.
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-      SERIES_BEST_OF: ${{ vars.SERIES_BEST_OF || '3' }}
       LIQUIPEDIA_USER_AGENT: ${{ vars.LIQUIPEDIA_USER_AGENT || 'TI2026DiscordBot/1.0 (GitHub Actions)' }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
     steps:
@@ -57,7 +53,6 @@ jobs:
             exit 0
           fi
           git commit -m "chore: remember TI match states"
-          # Retry push up to 3 times in case of transient errors
           pushed=0
           for i in 1 2 3; do
             if git pull --rebase --autostash origin main && git push origin HEAD:main; then
