@@ -189,6 +189,17 @@ class TestGrandFinalBestOf(unittest.TestCase):
         self.assertEqual(wins_required, 3)
         self.assertFalse(score_up_to(gf2, [gf1, gf2])[0] >= wins_required)
 
+    def test_lone_day11_series_is_bo3(self):
+        day11 = int(datetime(2026, 8, 23, 12, 0, tzinfo=UTC).timestamp())
+        only = {
+            "match_id": 1,
+            "start_time": day11,
+            "radiant_team_id": 10,
+            "dire_team_id": 20,
+            "radiant_win": True,
+        }
+        self.assertEqual(get_series_best_of(only, [only], 11), 3)
+
 
 class TestDiscordEmbeds(unittest.TestCase):
     def setUp(self):

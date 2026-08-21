@@ -177,18 +177,37 @@ def game_number(match: dict, matches: list[dict]) -> int:
     return 1
 
 
-def get_series_best_of(match: dict, day_matches: list[dict], day: int) -> int:
-    """TI 2026: the Grand Final series (last series of the last day) is Bo5; others are Bo3."""
+def ordered_day_series_keys(day_matches: list[dict]) -> list[str]:
+    keys: list[str] = []
+    seen: set[str] = set()
+    for match in sorted(day_matches, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0)):
+        key = series_key(match)
+        if key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
+def is_grand_final_series(match: dict, day_matches: list[dict], day: int) -> bool:
+    """Day 11: first series is Lower Bracket Final (Bo3), second series is Grand Final (Bo5)."""
     if day != GRAND_FINAL_DAY or not day_matches:
-        return DEFAULT_BEST_OF
-    last = day_matches[-1]
-    if series_key(match) == series_key(last):
-        return GRAND_FINAL_BEST_OF
-    return DEFAULT_BEST_OF
+        return False
+    series_keys = ordered_day_series_keys(day_matches)
+    return len(series_keys) >= 2 and series_key(match) == series_keys[1]
+
+
+def get_series_best_of(match: dict, day_matches: list[dict], day: int) -> int:
+    """Grand Final is Bo5 (3-0 / 3-1 / 3-2). Lower Bracket Final and every other series are Bo3."""
+    return GRAND_FINAL_BEST_OF if is_grand_final_series(match, day_matches, day) else DEFAULT_BEST_OF
 
 
 def is_grand_final_match(match: dict, day_matches: list[dict], day: int) -> bool:
-    return get_series_best_of(match, day_matches, day) == GRAND_FINAL_BEST_OF
+    return is_grand_final_series(match, day_matches, day)
+
+
+def series_is_complete(left_wins: int, right_wins: int, best_of: int) -> bool:
+    """True once a team has the wins needed for this format: 2 in Bo3, 3 in Bo5."""
+    return max(left_wins, right_wins) >= best_of // 2 + 1
 
 
 def eliminated_teams(matches: list[dict], up_to_day: int) -> dict[str, dict[str, object]]:

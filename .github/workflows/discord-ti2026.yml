@@ -15,7 +15,6 @@ on:
       - 'team_metadata.json'
       - '.github/workflows/discord-ti2026.yml'
   schedule:
-    # Every 10 minutes (broad coverage)
     - cron: "*/10 * 13-24 8 *"
   workflow_dispatch:
 
@@ -61,7 +60,6 @@ jobs:
             exit 0
           fi
           git commit -m "chore: remember TI match states"
-          # Retry push up to 3 times in case of transient errors
           pushed=0
           for i in 1 2 3; do
             if git pull --rebase --autostash origin main && git push origin HEAD:main; then

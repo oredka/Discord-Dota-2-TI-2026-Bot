@@ -6,8 +6,6 @@ __pycache__/
 *$py.class
 .env
 .state/
-!states/
-!states/*.json
 *.log
-# Per-day states are committed by the workflow; this file only holds API caches.
+# API caches only; per-day match_states_dayN.json files are committed by the workflow.
 states/match_states.json

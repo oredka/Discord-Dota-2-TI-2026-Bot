@@ -15,11 +15,10 @@ from api.opendota import (
     fetch_matches_cached,
 )
 from config import LAST_DAY, LEAGUE_ID, MIN_SERIES_PER_DAY, REST_DAYS, START_DATE
-from discord_messages import discord_color, format_duration, format_start, load_team_catalog, message, publish
+from discord_messages import load_team_catalog, message, publish
 from state import load_states, save_states
 from tournament import (
     current_tournament_day,
-    game_number,
     get_series_best_of,
     is_grand_final_match,
     is_series_announced,
@@ -27,8 +26,8 @@ from tournament import (
     match_state,
     score,
     score_up_to,
+    series_is_complete,
     series_key,
-    standings,
     teams,
     tournament_day,
 )
@@ -182,13 +181,12 @@ def main() -> int:
                 continue
 
             best_of = get_series_best_of(match, day_matches, day)
-            wins_required = best_of // 2 + 1
-            is_grand_final = is_grand_final_match(match, day_matches, day)
+            already_announced_game = match_id in day_states
+            left_wins, right_wins = score_up_to(match, matches)
+            is_series_end = series_is_complete(left_wins, right_wins, best_of)
+            is_grand_final = is_series_end and is_grand_final_match(match, day_matches, day)
 
-            if match_id not in day_states:
-                left_wins, right_wins = score_up_to(match, matches)
-                is_series_end = left_wins >= wins_required or right_wins >= wins_required
-
+            if not already_announced_game:
                 if not is_series_end:
                     if announce(
                         ctx,
@@ -211,8 +209,7 @@ def main() -> int:
                     else:
                         day_states[series_state_key] = "announced"
             else:
-                left_wins, right_wins = score_up_to(match, matches)
-                if left_wins >= wins_required or right_wins >= wins_required:
+                if is_series_end:
                     series_state_key = f"done:{series_key(match)}"
                     if not is_series_announced(day_states, match):
                         label = f"Series finished (delayed): {radiant} vs {dire} ({left_wins} — {right_wins})"
@@ -238,9 +235,8 @@ def main() -> int:
             for sm in day_series_map.values():
                 first_gm = sm[0]
                 b_of = get_series_best_of(first_gm, day_matches, day)
-                w_req = b_of // 2 + 1
                 w1, w2 = score(first_gm, day_matches)
-                if w1 >= w_req or w2 >= w_req:
+                if series_is_complete(w1, w2, b_of):
                     completed_series_count += 1
                 else:
                     all_series_complete = False
