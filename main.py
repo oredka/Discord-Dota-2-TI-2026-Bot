@@ -33,10 +33,10 @@ MIN_SERIES_PER_DAY = {
     3: 12,
     4: 5,
     5: 0,
-    6: 2,
-    7: 2,
-    8: 2,
-    9: 2,
+    6: 4,
+    7: 4,
+    8: 4,
+    9: 4,
     10: 2,
     11: 2,
 }
@@ -1004,12 +1004,12 @@ def main() -> int:
                 else:
                     all_series_complete = False
 
-            min_expected = MIN_SERIES_PER_DAY.get(day, 2)
+            min_expected = MIN_SERIES_PER_DAY.get(day, 4)
             has_expected_series = (completed_series_count >= min_expected)
 
             is_ready_to_close = (
-                (all_series_complete and has_expected_series and now > last_match_end + 3600)
-                or (day < curr_day and all_series_complete and now > last_match_end + 3600)
+                (all_series_complete and has_expected_series and now > last_match_end + 7200)
+                or (day < curr_day and all_series_complete and has_expected_series and now > last_match_end + 3600)
                 or is_next_day
             )
 
