@@ -1,41 +1,24 @@
 #!/usr/bin/env python3
-"""Send a test Discord message via webhook."""
+"""Send a test Discord message via webhook using the shared message builder."""
 
-import json
-import urllib.request
+from __future__ import annotations
+
 import os
 import sys
 
-webhook_url = os.environ.get('DISCORD_WEBHOOK_URL', '').strip()
-message_type = os.environ.get('MESSAGE_TYPE', 'day')
+from discord_messages import build_test_payload, publish
+
+webhook_url = (os.environ.get("DISCORD_WEBHOOK_URL") or os.environ.get("WEBHOOK_URL") or "").strip()
+message_type = os.environ.get("MESSAGE_TYPE", "day")
 
 if not webhook_url:
-    print('Error: DISCORD_WEBHOOK_URL not set')
+    print("Error: DISCORD_WEBHOOK_URL not set")
     sys.exit(1)
 
-# Keep text format in sync with main.py message()
-messages = {
-    'day': '📅 **ДЕНЬ 1 THE INTERNATIONAL 2026**\nhttps://www.youtube.com/@Dota2_maincast/streams',
-    'day_no_matches': '📅 **ДЕНЬ 5 THE INTERNATIONAL 2026**\nСьогодні ігор не заплановано',
-    'game_finished': '🎮 **ГРА 1 ЗАВЕРШИЛАСЯ**\n🇪🇺 Team Liquid 1 — 0 🇨🇳 Xtreme Gaming\n⏱ Тривалість: 42:15',
-    'series_finished': '🏆 **МАТЧ ЗАВЕРШИВСЯ**\n🇪🇺 Team Liquid 2 — 1 🇨🇳 Xtreme Gaming\n⏱ Тривалість гри 3: 42:15\n🥇 Переможець: 🇪🇺 Team Liquid'
-}
-
-payload = {
-    'content': messages.get(message_type, messages['day']),
-    'username': 'The International 2026',
-}
-
-req = urllib.request.Request(
-    webhook_url,
-    data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
-    headers={'Content-Type': 'application/json'},
-    method='POST'
-)
-
+payload = build_test_payload(message_type)
 try:
-    with urllib.request.urlopen(req, timeout=10) as response:
-        print(f'✓ Test message sent! Status: {response.status}')
-except Exception as e:
-    print(f'✗ Error: {e}')
+    publish(webhook_url, payload)
+    print(f"✓ Test message sent ({message_type})")
+except Exception as error:
+    print(f"✗ Error: {error}")
     sys.exit(1)

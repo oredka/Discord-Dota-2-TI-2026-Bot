@@ -5,6 +5,13 @@ on:
     branches: [ main ]
     paths:
       - 'main.py'
+      - 'config.py'
+      - 'tournament.py'
+      - 'discord_messages.py'
+      - 'state.py'
+      - 'http_client.py'
+      - 'api/**'
+      - 'tournament_config.json'
       - 'team_metadata.json'
       - '.github/workflows/discord-ti2026.yml'
   schedule:
@@ -18,16 +25,13 @@ permissions:
 # Two overlapping runs would read the same state and publish the same events twice.
 concurrency:
   group: discord-ti2026-updates
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   publish-update:
     runs-on: ubuntu-latest
-    # We removed the 'if: github.actor != ...' condition to ensure scheduled runs always execute.
-    # Since we only trigger on schedule and dispatch, there is no risk of a commit loop.
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-      SERIES_BEST_OF: ${{ vars.SERIES_BEST_OF || '3' }}
       LIQUIPEDIA_USER_AGENT: ${{ vars.LIQUIPEDIA_USER_AGENT || 'TI2026DiscordBot/1.0 (GitHub Actions)' }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
     steps:
@@ -69,5 +73,6 @@ jobs:
           done
           if test "$pushed" -ne 1; then
             echo "::error::Could not push match states; the next run would republish these events."
+            python -c "import os; from discord_messages import publish_state_push_failure; publish_state_push_failure(os.environ.get('DISCORD_WEBHOOK_URL', ''))" || echo "Warning: could not notify Discord of the failed state push."
             exit 1
           fi
