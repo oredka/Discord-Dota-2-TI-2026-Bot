@@ -37,4 +37,7 @@ LIQUIPEDIA_API = str(_CFG["liquipedia_api"])
 LIQUIPEDIA_STATISTICS_PAGE = str(_CFG["liquipedia_statistics_page"])
 LIQUIPEDIA_URL = str(_CFG["liquipedia_url"])
 USER_AGENT = os.getenv("LIQUIPEDIA_USER_AGENT", "").strip() or str(_CFG["user_agent"])
+LOGO_BASE_URL = str(
+    _CFG.get("logo_base_url") or "https://raw.githubusercontent.com/oredka/Discord-Dota-2-TI-Bot/main/"
+)
 DEFAULT_EMBED_COLOR = 0xD4AF37

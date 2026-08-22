@@ -3,96 +3,96 @@
     "flag": "🇷🇺",
     "region": "Європа",
     "color": "#00AEEF",
-    "logo": "https://cdn.steamusercontent.com/ugc/1839179120711951766/CD7E0885CB527334205CC7885E9C101B7BC17702/"
+    "logo": "logos/team_spirit.png"
   },
   "Xtreme Gaming": {
     "flag": "🇨🇳",
     "region": "Китай",
     "color": "#D71920",
-    "logo": "https://cdn.steamusercontent.com/ugc/2402194226059610590/E3CF4B6C4B2CFB974A9B415141E4A37317AD4D80/"
+    "logo": "logos/xtreme_gaming.png"
   },
   "Team Falcons": {
     "flag": "🇸🇦",
     "region": "Близький Схід",
-    "color": "#1E1E1E",
-    "logo": "https://cdn.steamusercontent.com/ugc/2314350571781870059/2B5C9FE9BA0A2DC303A13261444532AA08352843/"
+    "color": "#C9A227",
+    "logo": "logos/team_falcons.png"
   },
   "Team Liquid": {
     "flag": "🇪🇺",
     "region": "Європа",
     "color": "#0A4B9C",
-    "logo": "https://steamcdn-a.akamaihd.net/apps/dota2/images/team_logos/2163.png"
+    "logo": "logos/team_liquid.png"
   },
   "Aurora Gaming": {
     "flag": "🇷🇸",
     "region": "Європа",
     "color": "#2B59FF",
-    "logo": "https://cdn.steamusercontent.com/ugc/13052583756685508/22B0338D7E09FB2F021E5DB5BBEFFD170D5E5E1A/"
+    "logo": "logos/aurora_gaming.png"
   },
   "BoomBoys": {
     "flag": "🇷🇺",
     "region": "Європа",
     "color": "#BBFF00",
-    "logo": "https://cdn.steamusercontent.com/ugc/9995426432403529725/51E13136D4CCC8C7D8062861541A1D13B8ED87E0/"
+    "logo": "logos/boomboys.png"
   },
   "Iron Wing": {
     "flag": "🇷🇺",
     "region": "Європа",
     "color": "#00D1FF",
-    "logo": "https://cdn.steamusercontent.com/ugc/16903873521422862552/02513782FE03E7A567B8B8955A0DEF415EF2B624/"
+    "logo": "logos/iron_wing.png"
   },
   "Team Yandex": {
     "flag": "🇷🇺",
     "region": "Європа",
     "color": "#FF0000",
-    "logo": "https://cdn.steamusercontent.com/ugc/12970505637628494427/B04C3358F4E815ADFC2F8B1B8BE3AB0CE75C8881/"
+    "logo": "logos/team_yandex.png"
   },
   "TEAM VISION": {
     "flag": "🇷🇺",
     "region": "Європа",
     "color": "#FF00FF",
-    "logo": "https://cdn.steamusercontent.com/ugc/10380389074903512947/5D074799695A862D17D4205285315FE20399B28D/"
+    "logo": "logos/team_vision.png"
   },
   "Nigma Galaxy": {
     "flag": "🇦🇪",
     "region": "Європа",
-    "color": "#0A0A0A",
-    "logo": "https://cdn.steamusercontent.com/ugc/16959999218725724364/1D334B91A52606CA3E0027832D6F646E2A094391/"
+    "color": "#E0B84F",
+    "logo": "logos/nigma_galaxy.png"
   },
   "HULIGANI": {
     "flag": "🇷🇺",
     "region": "Європа",
     "color": "#FF4500",
-    "logo": "https://cdn.steamusercontent.com/ugc/14844266645370842778/47230D9640A722EAF06548C2EEB813ED4296AE3F/"
+    "logo": "logos/huligani.png"
   },
   "Team Resilience": {
     "flag": "🇨🇳",
     "region": "Китай",
     "color": "#FFD700",
-    "logo": "https://cdn.steamusercontent.com/ugc/14326265454983833183/734A1D8A0938380A48221CDAE1AACB0C5C0AB585/"
+    "logo": "logos/team_resilience.png"
   },
   "Vici Gaming": {
     "flag": "🇨🇳",
     "region": "Китай",
     "color": "#00A3DA",
-    "logo": "https://steamcdn-a.akamaihd.net/apps/dota2/images/team_logos/726228.png"
+    "logo": "logos/vici_gaming.png"
   },
   "OG": {
     "flag": "🇪🇺",
     "region": "Південно-Східна Азія",
-    "color": "#000000",
-    "logo": "https://steamcdn-a.akamaihd.net/apps/dota2/images/team_logos/2586976.png"
+    "color": "#98C93C",
+    "logo": "logos/og.png"
   },
   "GamerLegion": {
     "flag": "🇩🇪",
     "region": "Північна Америка",
     "color": "#8B0000",
-    "logo": "https://cdn.steamusercontent.com/ugc/13245379764580870318/1048428BEFAC87EC1C64E15706A4758A173B5BFB/"
+    "logo": "logos/gamerlegion.png"
   },
   "LGD Gaming": {
     "flag": "🇨🇳",
     "region": "Південна Америка",
     "color": "#FF6B35",
-    "logo": "https://cdn.steamusercontent.com/ugc/10055782735581672481/2B2BCEA9CC05286D7164E4548A2EB64CDBC77F31/"
+    "logo": "logos/lgd_gaming.png"
   }
 }

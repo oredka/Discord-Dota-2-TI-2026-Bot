@@ -9,6 +9,7 @@ from config import (
     DEFAULT_EMBED_COLOR,
     DISCORD_USERNAME,
     LIQUIPEDIA_URL,
+    LOGO_BASE_URL,
     MAINCAST_DOTA2_URL,
     OPENDOTA_MATCH_URL_TEMPLATE,
     TEAM_CATALOG_FILE,
@@ -143,10 +144,14 @@ def _team_embed_color(name: str, catalog: dict[str, dict[str, str]]) -> int:
 
 
 def _thumbnail(name: str, catalog: dict[str, dict[str, str]]) -> dict[str, str] | None:
-    logo = team_info(name, catalog).get("logo", "")
-    if logo:
-        return {"url": logo}
-    return None
+    logo = team_info(name, catalog).get("logo", "").strip()
+    if not logo:
+        return None
+    if logo.startswith(("http://", "https://")):
+        url = logo
+    else:
+        url = f"{LOGO_BASE_URL.rstrip('/')}/{logo.lstrip('/')}"
+    return {"url": url}
 
 
 def _payload(embeds: list[dict], content: str | None = None) -> dict[str, object]:
