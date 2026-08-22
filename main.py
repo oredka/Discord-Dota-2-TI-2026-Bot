@@ -5,32 +5,34 @@ from __future__ import annotations
 import os
 import sys
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
-from api.liquipedia import fetch_liquipedia_hero_stats, liquipedia_context
+from api.liquipedia import fetch_liquipedia_hero_stats
 from api.opendota import (
     ensure_details_for_hero_stats,
     ensure_match_details,
     fetch_heroes_catalog_cached,
     fetch_matches_cached,
 )
-from config import LAST_DAY, LEAGUE_ID, MIN_SERIES_PER_DAY, REST_DAYS, START_DATE
+from config import LAST_DAY, LEAGUE_ID, REST_DAYS
 from discord_messages import load_team_catalog, message, publish
 from state import load_states, save_states
 from tournament import (
     current_tournament_day,
+    day_close_status,
     get_series_best_of,
-    is_grand_final_match,
+    is_grand_final_series,
     is_series_announced,
     match_end_time,
     match_state,
-    score,
     score_up_to,
     series_is_complete,
     series_key,
     teams,
     tournament_day,
 )
+
+PUBLISH_DELAY_SECONDS = 0.5
 
 SILENT_BOOTSTRAP = os.getenv("SILENT_BOOTSTRAP", "").strip().lower() in ("1", "true", "yes")
 
@@ -77,11 +79,9 @@ def announce(
                 )
         msg = message(
             kind,
-            ctx["league"],
             match,
             ctx["matches"],
             ctx["catalog"],
-            ctx["now"],
             is_grand_final,
             day=day,
             heroes_catalog=ctx.get("heroes_catalog"),
@@ -90,7 +90,7 @@ def announce(
         parts = msg if isinstance(msg, list) else [msg]
         for part in parts:
             publish(ctx["webhook_url"], part)
-            time.sleep(0.5)
+            time.sleep(PUBLISH_DELAY_SECONDS)
         day_states[key] = "announced"
         print(f"  ✓ {label}")
         return True
@@ -103,17 +103,19 @@ def main() -> int:
     webhook_url = require("DISCORD_WEBHOOK_URL")
     now = int(datetime.now(UTC).timestamp())
     states = load_states()
-    liquipedia = liquipedia_context(states)
     catalog = load_team_catalog()
     heroes_catalog = fetch_heroes_catalog_cached(states)
     liquipedia_hero_stats = fetch_liquipedia_hero_stats(states)
 
-    league, matches = fetch_matches_cached(states, LEAGUE_ID)
+    _league, matches = fetch_matches_cached(states, LEAGUE_ID)
     if not matches:
         print("Warning: No matches available to process. Exiting run safely.")
         return 0
 
-    sorted_matches = sorted(matches, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))
+    sorted_matches = sorted(
+        matches,
+        key=lambda x: (x.get("start_time") or 0, x.get("series_id") or 0, x.get("match_id") or 0),
+    )
 
     day_to_matches: dict[int, list[dict]] = {}
     for match in sorted_matches:
@@ -123,14 +125,10 @@ def main() -> int:
 
     ctx = {
         "webhook_url": webhook_url,
-        "league": league,
         "matches": matches,
-        "liquipedia": liquipedia,
         "catalog": catalog,
         "heroes_catalog": heroes_catalog,
         "liquipedia_hero_stats": liquipedia_hero_stats,
-        "now": now,
-        "states": states,
     }
 
     published = 0
@@ -144,8 +142,6 @@ def main() -> int:
 
     for day in sorted(days_to_process):
         day_matches = day_to_matches.get(day, [])
-        day_matches = sorted(day_matches, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))
-
         day_states = load_states(day)
 
         if not day_matches:
@@ -164,7 +160,7 @@ def main() -> int:
             continue
 
         has_new_finished_matches = any(
-            str(m["match_id"]) not in day_states and match_state(m, now) == "finished" for m in day_matches
+            str(m["match_id"]) not in day_states and match_state(m) == "finished" for m in day_matches
         )
 
         if has_new_finished_matches and f"day:{day}" not in day_states:
@@ -176,7 +172,7 @@ def main() -> int:
             match_id = str(match["match_id"])
             radiant, dire = teams(match)
             radiant, dire = radiant.strip(), dire.strip()
-            if match_state(match, now) != "finished":
+            if match_state(match) != "finished":
                 processed += 1
                 continue
 
@@ -184,7 +180,7 @@ def main() -> int:
             already_announced_game = match_id in day_states
             left_wins, right_wins = score_up_to(match, matches)
             is_series_end = series_is_complete(left_wins, right_wins, best_of)
-            is_grand_final = is_series_end and is_grand_final_match(match, day_matches, day)
+            is_grand_final = is_series_end and is_grand_final_series(match, day_matches, day)
 
             if not already_announced_game:
                 if not is_series_end:
@@ -200,57 +196,22 @@ def main() -> int:
                 else:
                     day_states[match_id] = "announced"
 
-                if is_series_end:
-                    series_state_key = f"done:{series_key(match)}"
-                    if not is_series_announced(day_states, match):
-                        label = f"Series finished: {radiant} vs {dire} ({left_wins} — {right_wins})"
-                        if announce(ctx, day_states, series_state_key, "series_finished", match, label, is_grand_final):
-                            published += 1
-                    else:
-                        day_states[series_state_key] = "announced"
-            else:
-                if is_series_end:
-                    series_state_key = f"done:{series_key(match)}"
-                    if not is_series_announced(day_states, match):
-                        label = f"Series finished (delayed): {radiant} vs {dire} ({left_wins} — {right_wins})"
-                        if announce(ctx, day_states, series_state_key, "series_finished", match, label, is_grand_final):
-                            published += 1
-                    else:
-                        day_states[series_state_key] = "announced"
+            if is_series_end:
+                series_state_key = f"done:{series_key(match)}"
+                if is_series_announced(day_states, match):
+                    day_states[series_state_key] = "announced"
+                else:
+                    prefix = "Series finished (delayed)" if already_announced_game else "Series finished"
+                    label = f"{prefix}: {radiant} vs {dire} ({left_wins} — {right_wins})"
+                    if announce(ctx, day_states, series_state_key, "series_finished", match, label, is_grand_final):
+                        published += 1
 
             processed += 1
 
-        if day_matches and all(match_state(m, now) == "finished" for m in day_matches):
-            last_match = max(day_matches, key=match_end_time)
-            last_match_end = match_end_time(last_match)
-            next_day_start = int((START_DATE + timedelta(days=day)).timestamp())
-            is_next_day = now >= next_day_start + 14400
-
-            day_series_map: dict[str, list[dict]] = {}
-            for m in day_matches:
-                day_series_map.setdefault(series_key(m), []).append(m)
-
-            all_series_complete = True
-            completed_series_count = 0
-            for sm in day_series_map.values():
-                first_gm = sm[0]
-                b_of = get_series_best_of(first_gm, day_matches, day)
-                w1, w2 = score(first_gm, day_matches)
-                if series_is_complete(w1, w2, b_of):
-                    completed_series_count += 1
-                else:
-                    all_series_complete = False
-
-            min_expected = MIN_SERIES_PER_DAY.get(day, 4)
-            has_expected_series = completed_series_count >= min_expected
-
-            is_ready_to_close = (
-                (all_series_complete and has_expected_series and now > last_match_end + 7200)
-                or (day < curr_day and all_series_complete and has_expected_series and now > last_match_end + 3600)
-                or is_next_day
-            )
-
-            if is_ready_to_close:
+        if day_matches and all(match_state(m) == "finished" for m in day_matches):
+            close = day_close_status(day, day_matches, now, curr_day)
+            if close.ready:
+                last_match = max(day_matches, key=match_end_time)
                 if announce(
                     ctx,
                     day_states,
@@ -261,13 +222,13 @@ def main() -> int:
                     day=day,
                 ):
                     published += 1
-            else:
-                if not all_series_complete or (day == curr_day and not has_expected_series and not is_next_day):
-                    day_states.pop(f"day:{day}:finished", None)
+            elif not close.all_series_complete or (
+                day == curr_day and not close.has_expected_series and not close.is_next_day
+            ):
+                day_states.pop(f"day:{day}:finished", None)
 
         save_states(day_states, day)
 
-    states["liquipedia"] = liquipedia
     save_states(states)
 
     print(f"Processed {processed} match(es), published {published} Discord update(s).")

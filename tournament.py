@@ -2,17 +2,35 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 
-from config import DEFAULT_BEST_OF, GRAND_FINAL_BEST_OF, GRAND_FINAL_DAY, START_DATE
+from config import (
+    DEFAULT_BEST_OF,
+    GRAND_FINAL_BEST_OF,
+    GRAND_FINAL_DAY,
+    MIN_SERIES_PER_DAY,
+    START_DATE,
+)
 from uk_text import hero_ban_line, hero_pick_line
+
+CLOSE_GRACE_CURRENT_DAY = 7200
+CLOSE_GRACE_PAST_DAY = 3600
+NEXT_CALENDAR_DAY_OFFSET = 14400
+
+
+class DayCloseStatus(NamedTuple):
+    ready: bool
+    all_series_complete: bool
+    has_expected_series: bool
+    is_next_day: bool
 
 
 def teams(match: dict) -> tuple[str, str]:
     return (match.get("radiant_name") or "Radiant", match.get("dire_name") or "Dire")
 
 
-def match_state(match: dict, now: int) -> str:
+def match_state(match: dict) -> str:
     if match.get("radiant_win") is not None:
         return "finished"
     return "scheduled"
@@ -82,6 +100,24 @@ def games_in_series(match: dict, matches: list[dict]) -> list[dict]:
     return sorted(series_games, key=lambda x: (x.get("start_time") or 0, x.get("match_id") or 0))
 
 
+def _series_sides(series_games: list[dict]) -> tuple[int | None, str, int | None, str]:
+    first = series_games[0]
+    return (
+        first.get("radiant_team_id"),
+        (first.get("radiant_name") or "Radiant").strip(),
+        first.get("dire_team_id"),
+        (first.get("dire_name") or "Dire").strip(),
+    )
+
+
+def _series_index(match: dict, series_games: list[dict]) -> int:
+    mid = str(match.get("match_id"))
+    for i, game in enumerate(series_games):
+        if str(game.get("match_id")) == mid:
+            return i
+    return -1
+
+
 def count_series_wins(
     sm: list[dict],
     left_team_id: int | None,
@@ -135,11 +171,7 @@ def score(match: dict, matches: list[dict]) -> tuple[int, int]:
     series_games = games_in_series(match, matches)
     if not series_games:
         return 0, 0
-    first_game = series_games[0]
-    left_team_id = first_game.get("radiant_team_id")
-    right_team_id = first_game.get("dire_team_id")
-    left_name = (first_game.get("radiant_name") or "Radiant").strip()
-    right_name = (first_game.get("dire_name") or "Dire").strip()
+    left_team_id, left_name, right_team_id, right_name = _series_sides(series_games)
     return count_series_wins(series_games, left_team_id, left_name, right_team_id, right_name)
 
 
@@ -147,35 +179,23 @@ def score_up_to(match: dict, matches: list[dict]) -> tuple[int, int]:
     series_games = games_in_series(match, matches)
     if not series_games:
         return 0, 0
-
-    first_game = series_games[0]
-    left_team_id = first_game.get("radiant_team_id")
-    right_team_id = first_game.get("dire_team_id")
-    left_name = (first_game.get("radiant_name") or "Radiant").strip()
-    right_name = (first_game.get("dire_name") or "Dire").strip()
-
-    try:
-        current_game_index = -1
-        for i, g in enumerate(series_games):
-            if str(g.get("match_id")) == str(match.get("match_id")):
-                current_game_index = i
-                break
-
-        if current_game_index == -1:
-            return 0, 0
-    except Exception:
+    current_game_index = _series_index(match, series_games)
+    if current_game_index == -1:
         return 0, 0
-
-    games_to_count = series_games[: current_game_index + 1]
-    return count_series_wins(games_to_count, left_team_id, left_name, right_team_id, right_name)
+    left_team_id, left_name, right_team_id, right_name = _series_sides(series_games)
+    return count_series_wins(
+        series_games[: current_game_index + 1],
+        left_team_id,
+        left_name,
+        right_team_id,
+        right_name,
+    )
 
 
 def game_number(match: dict, matches: list[dict]) -> int:
     series_games = games_in_series(match, matches)
-    for i, g in enumerate(series_games):
-        if str(g.get("match_id")) == str(match.get("match_id")):
-            return i + 1
-    return 1
+    index = _series_index(match, series_games)
+    return index + 1 if index >= 0 else 1
 
 
 def ordered_day_series_keys(day_matches: list[dict]) -> list[str]:
@@ -202,13 +222,51 @@ def get_series_best_of(match: dict, day_matches: list[dict], day: int) -> int:
     return GRAND_FINAL_BEST_OF if is_grand_final_series(match, day_matches, day) else DEFAULT_BEST_OF
 
 
-def is_grand_final_match(match: dict, day_matches: list[dict], day: int) -> bool:
-    return is_grand_final_series(match, day_matches, day)
-
-
 def series_is_complete(left_wins: int, right_wins: int, best_of: int) -> bool:
     """True once a team has the wins needed for this format: 2 in Bo3, 3 in Bo5."""
     return max(left_wins, right_wins) >= best_of // 2 + 1
+
+
+def completed_series_for_day(day_matches: list[dict], day: int) -> tuple[int, bool]:
+    """Return (completed series count, whether every series on this day is complete)."""
+    day_series_map: dict[str, list[dict]] = {}
+    for match in day_matches:
+        day_series_map.setdefault(series_key(match), []).append(match)
+
+    completed = 0
+    all_complete = True
+    for series_games in day_series_map.values():
+        first = series_games[0]
+        best_of = get_series_best_of(first, day_matches, day)
+        left_wins, right_wins = score(first, day_matches)
+        if series_is_complete(left_wins, right_wins, best_of):
+            completed += 1
+        else:
+            all_complete = False
+    return completed, all_complete
+
+
+def day_close_status(day: int, day_matches: list[dict], now: int, curr_day: int) -> DayCloseStatus:
+    """Whether the day-finished announcement can go out, plus the flags that gate retries."""
+    if not day_matches:
+        return DayCloseStatus(False, False, False, False)
+
+    last_match_end = match_end_time(max(day_matches, key=match_end_time))
+    next_day_start = int((START_DATE + timedelta(days=day)).timestamp())
+    is_next_day = now >= next_day_start + NEXT_CALENDAR_DAY_OFFSET
+    completed_count, all_series_complete = completed_series_for_day(day_matches, day)
+    has_expected_series = completed_count >= MIN_SERIES_PER_DAY.get(day, 4)
+    ready = (
+        (all_series_complete and has_expected_series and now > last_match_end + CLOSE_GRACE_CURRENT_DAY)
+        or (
+            day < curr_day
+            and all_series_complete
+            and has_expected_series
+            and now > last_match_end + CLOSE_GRACE_PAST_DAY
+        )
+        or is_next_day
+    )
+    return DayCloseStatus(ready, all_series_complete, has_expected_series, is_next_day)
 
 
 def eliminated_teams(matches: list[dict], up_to_day: int) -> dict[str, dict[str, object]]:
@@ -253,18 +311,18 @@ def eliminated_teams(matches: list[dict], up_to_day: int) -> dict[str, dict[str,
         if swiss_wins[loser] < 4:
             swiss_losses[loser] += 1
             if swiss_losses[loser] >= 4 and loser not in elim_info:
-                place_str = "14-16 місце" if s_day <= 3 else "11-13 місце"
+                place_str = "14–16 місця" if s_day <= 3 else "11–13 місця"
                 elim_info[loser] = {"day": s_day, "place": place_str, "stage": "swiss"}
         else:
             playoff_losses[loser] += 1
             if playoff_losses[loser] >= 2 and loser not in elim_info:
                 elim_count = len([t for t, info in elim_info.items() if info["stage"] == "playoffs"])
                 if elim_count < 2:
-                    place_str = "9-10 місце"
+                    place_str = "9–10 місця"
                 elif elim_count < 4:
-                    place_str = "7-8 місце"
+                    place_str = "7–8 місця"
                 elif elim_count < 6:
-                    place_str = "5-6 місце"
+                    place_str = "5–6 місця"
                 elif elim_count == 6:
                     place_str = "4 місце"
                 elif elim_count == 7:

@@ -1,4 +1,4 @@
-"""Liquipedia page extras and hero-statistics parser."""
+"""Liquipedia hero-statistics parser."""
 
 from __future__ import annotations
 
@@ -10,9 +10,7 @@ from urllib.parse import urlencode
 from config import (
     LIQUIPEDIA_API,
     LIQUIPEDIA_CACHE_SECONDS,
-    LIQUIPEDIA_PAGE,
     LIQUIPEDIA_STATISTICS_PAGE,
-    TOURNAMENT_NAME,
     USER_AGENT,
 )
 from http_client import get_json
@@ -51,20 +49,6 @@ class LiquipediaTableParser(HTMLParser):
     def handle_data(self, data: str):
         if self.in_cell:
             self.curr_cell.append(data)
-
-
-def liquipedia_context(states: dict[str, object]) -> dict[str, object]:
-    """Fetch the public page at most once per cache window; match tracking must survive a failure."""
-    cached = states.get("liquipedia")
-    if isinstance(cached, dict) and time.time() - cached.get("fetched_at", 0) < LIQUIPEDIA_CACHE_SECONDS:
-        return cached
-    query = urlencode({"action": "parse", "page": LIQUIPEDIA_PAGE, "prop": "displaytitle", "format": "json"})
-    try:
-        data = get_json(f"{LIQUIPEDIA_API}?{query}", {"User-Agent": USER_AGENT, "Accept": "application/json"})
-        return {"fetched_at": time.time(), "title": data.get("parse", {}).get("displaytitle", TOURNAMENT_NAME)}
-    except RuntimeError as error:
-        print(f"Warning: {error}; continuing without Liquipedia extras.", file=sys.stderr)
-        return cached if isinstance(cached, dict) else {"fetched_at": time.time()}
 
 
 def fetch_liquipedia_hero_stats(states: dict[str, object]) -> dict[str, list[str]]:

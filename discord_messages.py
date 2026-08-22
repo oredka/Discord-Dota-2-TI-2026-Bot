@@ -1,10 +1,9 @@
-"""Discord webhook payloads: embeds, publish, and sample test messages."""
+"""Discord webhook payloads: embeds and publish."""
 
 from __future__ import annotations
 
 import json
 import sys
-from datetime import UTC, datetime
 
 from config import (
     DEFAULT_EMBED_COLOR,
@@ -31,7 +30,7 @@ EMBED_DESC_LIMIT = 4096
 EMBED_FIELD_LIMIT = 1024
 EMBED_TOTAL_LIMIT = 6000
 STATE_PUSH_FAILURE_ALERT = (
-    "⚠️ Не вдалося зберегти стан матчів у git. Наступний запуск може повторно опублікувати події."
+    "⚠️ Не вдалося зберегти стан матчів у Git. Наступний запуск може повторно опублікувати події."
 )
 
 
@@ -71,12 +70,6 @@ def team_label(name: str, catalog: dict[str, dict[str, str]]) -> str:
 def format_duration(seconds: int | None) -> str:
     seconds = seconds or 0
     return f"{seconds // 60}:{seconds % 60:02d}" if seconds else "—"
-
-
-def format_start(unix_time: int | None) -> str:
-    if not unix_time:
-        return "час уточнюється"
-    return f"<t:{unix_time}:t>"
 
 
 def opendota_match_url(match_id: object) -> str:
@@ -119,9 +112,9 @@ def format_draft(match: dict | None, heroes_catalog: dict[int, str] | None = Non
         return ""
     lines = [
         f"**Сяйво:** {', '.join(radiant_picks) or '—'}",
-        f"бани: {', '.join(radiant_bans) or '—'}",
+        f"Бани: {', '.join(radiant_bans) or '—'}",
         f"**Пітьма:** {', '.join(dire_picks) or '—'}",
-        f"бани: {', '.join(dire_bans) or '—'}",
+        f"Бани: {', '.join(dire_bans) or '—'}",
     ]
     return "\n".join(lines)
 
@@ -163,10 +156,6 @@ def _payload(embeds: list[dict], content: str | None = None) -> dict[str, object
     return body
 
 
-def _as_list(result: dict[str, object] | list[dict[str, object]]) -> list[dict[str, object]]:
-    return result if isinstance(result, list) else [result]
-
-
 def _day_title(day: int, finished: bool = False) -> str:
     if finished:
         return f"🏆 ДЕНЬ {day} {TOURNAMENT_NAME.upper()} ЗАВЕРШИВСЯ"
@@ -191,20 +180,56 @@ def _hero_stats_description(h_stats: dict[str, list[str]]) -> str:
     return "\n\n".join(sections)
 
 
+def _match_result_payload(
+    *,
+    title: str,
+    description: str,
+    winner_name: str,
+    catalog: dict[str, dict[str, str]],
+    match: dict,
+    duration_field: str,
+    duration: str,
+    left_score: int,
+    right_score: int,
+    draft: str,
+    draft_field: str,
+) -> dict[str, object]:
+    match_id = match.get("match_id")
+    match_url = opendota_match_url(match_id) if match_id else ""
+    embed: dict[str, object] = {
+        "title": title,
+        "description": description,
+        "color": _team_embed_color(winner_name, catalog),
+    }
+    if match_url:
+        embed["url"] = match_url
+    thumb = _thumbnail(winner_name, catalog)
+    if thumb:
+        embed["thumbnail"] = thumb
+    fields = [
+        _field(duration_field, duration),
+        _field("Рахунок серії", f"{left_score} — {right_score}"),
+        _field("Переможець", team_label(winner_name, catalog)),
+    ]
+    if match_url:
+        fields.append(_field("OpenDota", f"[Матч {match_id}]({match_url})"))
+    if draft:
+        fields.append(_field(draft_field, draft, inline=False))
+    embed["fields"] = fields
+    return _payload([embed])
+
+
 def message(
     kind: str,
-    league: dict,
     match: dict | None,
     matches: list[dict],
     catalog: dict[str, dict[str, str]],
-    now: int,
     is_grand_final: bool = False,
     day: int | None = None,
     heroes_catalog: dict[int, str] | None = None,
     liquipedia_hero_stats: dict[str, list[str]] | None = None,
 ) -> dict[str, object] | list[dict[str, object]]:
     """Build Discord webhook payload(s) with embeds. Split only when Discord limits require it."""
-    del league, now  # kept in the signature so callers/tests stay stable
     if day is None and match:
         day = tournament_day(match)
 
@@ -237,7 +262,7 @@ def message(
         h_stats = hero_stats(matches, day or 0, heroes_catalog or {}, liquipedia_hero_stats=liquipedia_hero_stats)
         if h_stats.get("picks") or h_stats.get("bans"):
             hero_embed: dict[str, object] = {
-                "title": "🧙‍♂️ Топ героїв турніру",
+                "title": "🧙‍♂️ Топ-10 героїв турніру",
                 "description": _clip(_hero_stats_description(h_stats), EMBED_DESC_LIMIT),
                 "color": DEFAULT_EMBED_COLOR,
             }
@@ -253,40 +278,30 @@ def message(
 
     series_games = games_in_series(match, matches)
     first_game = series_games[0] if series_games else match
-    left_name = (first_game.get("radiant_name") or "Radiant").strip()
-    right_name = (first_game.get("dire_name") or "Dire").strip()
+    left_name, right_name = teams(first_game)
+    left_name, right_name = left_name.strip(), right_name.strip()
     left_label = team_label(left_name, catalog)
     right_label = team_label(right_name, catalog)
-    match_id = match.get("match_id")
     duration = format_duration(match.get("duration"))
     last_game_num = game_number(match, matches)
     draft = format_draft(match, heroes_catalog)
-    match_url = opendota_match_url(match_id) if match_id else ""
 
     if kind == "game_finished":
         left_score, right_score = score_up_to(match, matches)
         winner_name = game_winner_name(match)
-        embed = {
-            "title": f"🎮 ГРА {last_game_num} ЗАВЕРШИЛАСЯ",
-            "description": f"{left_label} **{left_score} — {right_score}** {right_label}",
-            "color": _team_embed_color(winner_name, catalog),
-        }
-        if match_url:
-            embed["url"] = match_url
-        thumb = _thumbnail(winner_name, catalog)
-        if thumb:
-            embed["thumbnail"] = thumb
-        fields = [
-            _field("Тривалість", duration),
-            _field("Рахунок серії", f"{left_score} — {right_score}"),
-            _field("Переможець", team_label(winner_name, catalog)),
-        ]
-        if match_url:
-            fields.append(_field("OpenDota", f"[Матч {match_id}]({match_url})"))
-        if draft:
-            fields.append(_field("Драфт", draft, inline=False))
-        embed["fields"] = fields
-        return _payload([embed])
+        return _match_result_payload(
+            title=f"🎮 ГРА {last_game_num} ЗАВЕРШИЛАСЯ",
+            description=f"{left_label} **{left_score} — {right_score}** {right_label}",
+            winner_name=winner_name,
+            catalog=catalog,
+            match=match,
+            duration_field="Тривалість",
+            duration=duration,
+            left_score=left_score,
+            right_score=right_score,
+            draft=draft,
+            draft_field="Драфт",
+        )
 
     left_total, right_total = score(match, matches)
     winner_name = left_name if left_total > right_total else right_name
@@ -296,28 +311,19 @@ def message(
     else:
         title = "🏆 МАТЧ ЗАВЕРШИВСЯ"
         description = f"{left_label} **{left_total} — {right_total}** {right_label}"
-
-    embed = {
-        "title": title,
-        "description": description,
-        "color": _team_embed_color(winner_name, catalog),
-    }
-    if match_url:
-        embed["url"] = match_url
-    thumb = _thumbnail(winner_name, catalog)
-    if thumb:
-        embed["thumbnail"] = thumb
-    fields = [
-        _field(f"Тривалість гри {last_game_num}", duration),
-        _field("Рахунок серії", f"{left_total} — {right_total}"),
-        _field("Переможець", team_label(winner_name, catalog)),
-    ]
-    if match_url:
-        fields.append(_field("OpenDota", f"[Матч {match_id}]({match_url})"))
-    if draft:
-        fields.append(_field(f"Драфт (гра {last_game_num})", draft, inline=False))
-    embed["fields"] = fields
-    return _payload([embed])
+    return _match_result_payload(
+        title=title,
+        description=description,
+        winner_name=winner_name,
+        catalog=catalog,
+        match=match,
+        duration_field=f"Тривалість гри {last_game_num}",
+        duration=duration,
+        left_score=left_total,
+        right_score=right_total,
+        draft=draft,
+        draft_field=f"Драфт (гра {last_game_num})",
+    )
 
 
 def publish(webhook_url: str, payload: dict[str, object]) -> None:
@@ -334,68 +340,3 @@ def publish_state_push_failure(webhook_url: str) -> None:
     if not webhook_url.strip():
         raise RuntimeError("Missing DISCORD_WEBHOOK_URL for state-push alert")
     publish_alert(webhook_url, STATE_PUSH_FAILURE_ALERT)
-
-
-def build_test_payload(message_type: str) -> dict[str, object]:
-    """Sample webhook payload for workflows/scripts — same builder as production."""
-    catalog = load_team_catalog()
-    now = int(datetime.now(UTC).timestamp())
-    day1 = int(datetime(2026, 8, 13, 12, 0, tzinfo=UTC).timestamp())
-    heroes = {1: "Anti-Mage", 2: "Axe", 3: "Bane", 4: "Bloodseeker", 5: "Crystal Maiden", 6: "Drow Ranger"}
-    g1 = {
-        "match_id": 8000000001,
-        "radiant_win": True,
-        "start_time": day1,
-        "duration": 2535,
-        "radiant_team_id": 2163,
-        "dire_team_id": 8261500,
-        "radiant_name": "Team Liquid",
-        "dire_name": "Xtreme Gaming",
-        "picks_bans": [
-            {"hero_id": 1, "is_pick": True, "team": 0, "order": 0},
-            {"hero_id": 2, "is_pick": True, "team": 1, "order": 1},
-            {"hero_id": 3, "is_pick": False, "team": 0, "order": 2},
-            {"hero_id": 4, "is_pick": False, "team": 1, "order": 3},
-            {"hero_id": 5, "is_pick": True, "team": 0, "order": 4},
-            {"hero_id": 6, "is_pick": True, "team": 1, "order": 5},
-        ],
-    }
-    g2 = {
-        **g1,
-        "match_id": 8000000002,
-        "radiant_win": False,
-        "start_time": day1 + 3600,
-        "duration": 2100,
-    }
-    g3 = {
-        **g1,
-        "match_id": 8000000003,
-        "radiant_win": True,
-        "start_time": day1 + 7200,
-        "duration": 2535,
-    }
-    matches = [g1, g2, g3]
-    league = {"displayName": TOURNAMENT_NAME, "id": 0}
-    kind_map = {
-        "day": "tournament_day",
-        "tournament_day": "tournament_day",
-        "day_no_matches": "tournament_day_no_matches",
-        "tournament_day_no_matches": "tournament_day_no_matches",
-        "game_finished": "game_finished",
-        "series_finished": "series_finished",
-        "day_finished": "day_finished",
-    }
-    kind = kind_map.get(message_type, "tournament_day")
-    match = g1 if kind in ("game_finished", "series_finished", "day_finished", "tournament_day") else None
-    day = 5 if kind == "tournament_day_no_matches" else 1
-    result = message(
-        kind,
-        league,
-        match,
-        matches,
-        catalog,
-        now,
-        day=day,
-        heroes_catalog=heroes,
-    )
-    return _as_list(result)[0]
