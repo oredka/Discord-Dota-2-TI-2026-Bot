@@ -1,4 +1,4 @@
-name: The International 2026 Discord updates
+name: The International Discord updates
 
 on:
   push:
@@ -14,7 +14,7 @@ on:
       - 'uk_text.py'
       - 'tournament_config.json'
       - 'team_metadata.json'
-      - '.github/workflows/discord-ti2026.yml'
+      - '.github/workflows/discord-ti.yml'
   schedule:
     - cron: "*/10 * 13-24 8 *"
   workflow_dispatch:
@@ -24,7 +24,7 @@ permissions:
 
 # Two overlapping runs would read the same state and publish the same events twice.
 concurrency:
-  group: discord-ti2026-updates
+  group: discord-ti-updates
   cancel-in-progress: true
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-      LIQUIPEDIA_USER_AGENT: ${{ vars.LIQUIPEDIA_USER_AGENT || 'TI2026DiscordBot/1.0 (GitHub Actions)' }}
+      LIQUIPEDIA_USER_AGENT: ${{ vars.LIQUIPEDIA_USER_AGENT || 'TIDiscordBot/1.0 (GitHub Actions)' }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
     steps:
       - uses: actions/checkout@v4

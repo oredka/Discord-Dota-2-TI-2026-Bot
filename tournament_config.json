@@ -29,5 +29,5 @@
   "liquipedia_api": "https://liquipedia.net/dota2/api.php",
   "liquipedia_statistics_page": "The_International/2026/Statistics",
   "liquipedia_url": "https://liquipedia.net/dota2/The_International/2026",
-  "user_agent": "TI2026DiscordBot/1.0 (GitHub Actions)"
+  "user_agent": "TIDiscordBot/1.0 (GitHub Actions)"
 }

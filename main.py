@@ -1,4 +1,4 @@
-"""Track The International 2026 through OpenDota and post match events to Discord."""
+"""Track The International through OpenDota and post match events to Discord."""
 
 from __future__ import annotations
 
