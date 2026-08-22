@@ -37,4 +37,4 @@ LIQUIPEDIA_API = str(_CFG["liquipedia_api"])
 LIQUIPEDIA_STATISTICS_PAGE = str(_CFG["liquipedia_statistics_page"])
 LIQUIPEDIA_URL = str(_CFG["liquipedia_url"])
 USER_AGENT = os.getenv("LIQUIPEDIA_USER_AGENT", "").strip() or str(_CFG["user_agent"])
-DEFAULT_EMBED_COLOR = 0xD32F2F
+DEFAULT_EMBED_COLOR = 0xD4AF37
